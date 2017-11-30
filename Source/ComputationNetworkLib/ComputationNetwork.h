@@ -182,6 +182,7 @@ public:
     void ForwardProp(const NODESET& nodes)
     {
         TravserseInSortedGlobalEvalOrder(nodes, [](const ComputationNodeBasePtr& node) {
+            //std::wcout << "Setting empty frame range for :" << node->GetName() << std::endl;
             PARTraversalFlowControlNode::ForwardProp(node, FrameRange(nullptr));
         });
     }

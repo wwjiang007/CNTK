@@ -18,6 +18,8 @@
 #include <algorithm>
 #include <map>
 
+#include <iostream>
+
 using namespace std;
 
 namespace Microsoft { namespace MSR { namespace CNTK {
@@ -140,11 +142,16 @@ ComputationNetwork::PARTraversalFlowControlNode::PARTraversalFlowControlNode(con
         }
     }
 }
+
 /*static*/ void ComputationNetwork::PARTraversalFlowControlNode::ForwardProp(const ComputationNodeBasePtr& node, const FrameRange& fr)
 {
     if (node->IsOutOfDateWrtInputs())
     {
         node->BeginForwardProp();
+        //if (node->GetMBLayout() != nullptr)
+        //{
+        //    wcout<< "node has mb layout: " << node->GetMBLayoutAxisString() <<endl;
+        //}
         node->ForwardProp(fr.WithLayout(node->GetMBLayout()));
         node->EndForwardProp();
 

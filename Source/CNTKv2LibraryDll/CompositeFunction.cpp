@@ -1195,6 +1195,7 @@ namespace CNTK
                 }
 
                 inputNodesBasePtrs = uniqueInputNodesBasePtrs;
+                //computationNodePtr->Validate(false);
             }
         }
         else

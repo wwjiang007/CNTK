@@ -51,7 +51,8 @@ public:
 
     virtual void ForwardProp(const FrameRange& fr) override
     {      
-        std::cout << "INOVKING UDF FORWARD PATH 1" << fr.IsAllFrames()<<std::endl;
+        std::cout << "INOVKING UDF FORWARD PATH 1:" << fr.IsAllFrames()<<std::endl;
+        
         this->m_outputsValue[0] = m_value;
 
         // Get the arguments of the external function
@@ -62,6 +63,7 @@ public:
         for (size_t i = 0; i < numInputs; ++i)
         { 
             auto& input = InputRef(i);
+
             if (input.template Is<LearnableParameter<ElemType>>())
                 continue;
 
@@ -212,6 +214,7 @@ public:
 
 
         Base::Validate(isFinalValidationPass);
+        //InferMBLayoutFromInputsForStandardCase(isFinalValidationPass);
 
         auto outputs = m_externalFunction->Outputs();
         bool layoutNotInitialized = (m_pMBLayout == nullptr);
@@ -237,7 +240,7 @@ public:
                 }
                 else
                 {
-                    this->m_outputsMBLayout[i] = make_shared<MBLayout>(); // this generates a new layout
+                    this->m_outputsMBLayout[i] = make_shared<MBLayout>(); // this generates a new layout                    
                     this->m_outputsMBLayout[i]->SetUniqueAxisName(InternalDynamicAxisNameFromDynamicAxes(output.DynamicAxes()));
                     this->m_outputsHasNewMBLayout[i] = true;
                 }
