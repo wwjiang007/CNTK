@@ -712,7 +712,7 @@ std::vector<Axis> ONNXToCNTKHelper::ArgsortAxis(const std::vector<Axis> &permuta
 {
     std::vector<Axis> argsortedPermutation = permutation;
     std::sort(argsortedPermutation.begin(), argsortedPermutation.end(),
-        [permutation](Axis &i1, Axis &i2) {
+        [permutation](Axis i1, Axis i2) {
         return permutation[i1.StaticAxisIndex()].StaticAxisIndex() < permutation[i2.StaticAxisIndex()].StaticAxisIndex(); });
     return argsortedPermutation;
 }
