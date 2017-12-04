@@ -1530,13 +1530,13 @@ Variable ONNXToCNTKHelper::GetNodeOperandWithPaddingResolved(std::vector<bool>& 
         {
             // Create appropriate pad node.
             auto padsPair = AdjustONNXPadsVecForCNTKPadOp(operand, pads);
-            
+            auto nodeName = node->Name().empty() ? node->Name() : node->Name() + std::string("_pad");
             FunctionPtr cntkPadFunction = Pad(operand,
                 CNTK::PaddingMode::CONSTANTPAD,
                 padsPair.first,
                 padsPair.second,
                 padValue,
-                ToWString(node->Name() + std::string("_pad")));
+                ToWString(nodeName));
             convOperand = (Variable)cntkPadFunction;
         }
         cntkConvAutoPadding.insert(cntkConvAutoPadding.begin(), strides.Rank(), false); // For 'VALID' convolution
@@ -1591,9 +1591,9 @@ FunctionPtr ONNXToCNTKHelper::CreateCNTKFCNode(const std::wstring& nodeName, con
     //  first operand to [1, dim0 * dim1] In this case dim0 * dim1 has to be equal to dim2.
     // 2. Broadcase bias if needed.
     Variable input0 = inputs[0], input1 = inputs[1];
-    input0 = Reshape(input0, { 1, NDShape::InferredDimension });
-
-    FunctionPtr cntkFunction = Reshape(Times(input0, input1, nodeName), { NDShape::InferredDimension });
+    input0 = Reshape(input0, { 1, input0.Shape().TotalSize() });
+    FunctionPtr cntkFunction = Times(input0, input1, nodeName);
+    cntkFunction = Reshape(cntkFunction, { cntkFunction->Output().Shape().TotalSize() });
     cntkFunction = Plus(cntkFunction, inputs[2], nodeName);
     return cntkFunction;
 }
