@@ -97,6 +97,7 @@ private:
         const string &onnxAutoPaddingAttributeName, const std::vector<bool> &defaultValue);
     static void AdjustAutoPaddingAndStrideForCNTKSpecialCases(const Variable &operand, 
         std::vector<bool> &autoPadding, NDShape &strides);
+    static std::pair<std::vector<size_t>, std::vector<size_t> > SplitAndReverseVec(std::vector<int64_t>& pads);
     static std::pair<std::vector<size_t>, std::vector<size_t> > AdjustONNXPadsVecForCNTKPadOp(const Variable &operand, std::vector<int64_t>& pads);
     static NDShape ReverseShape(const NDShape &shape);
 
@@ -828,6 +829,17 @@ void ONNXToCNTKHelper::AdjustAutoPaddingAndStrideForCNTKSpecialCases(const Varia
     }
 }
 
+std::pair<std::vector<size_t>, std::vector<size_t> > ONNXToCNTKHelper::SplitAndReverseVec(std::vector<int64_t>& pads)
+{
+    // Split this into head (lower padding) and foot (upper padding), and reverse them because 
+    // CNTK dimensions are in reverse order than ONNX. 
+    auto numOperandDims = pads.size() / 2;
+    std::vector<size_t> head(pads.rbegin() + numOperandDims, pads.rend()); // The first half (lower) reversed.
+    std::vector<size_t> foot(pads.rbegin(), pads.rbegin() + numOperandDims); // The second half (upper) reversed.
+
+    return std::make_pair(head, foot);
+}
+
 std::pair<std::vector<size_t>, std::vector<size_t> > ONNXToCNTKHelper::AdjustONNXPadsVecForCNTKPadOp(const Variable &operand, std::vector<int64_t>& pads)
 {
     // If there are added dimensions because of depth/channels or batch axis, then insert zeros
@@ -838,13 +850,7 @@ std::pair<std::vector<size_t>, std::vector<size_t> > ONNXToCNTKHelper::AdjustONN
     pads.insert(pads.begin(), rankDiff, 0);
     pads.insert(pads.begin() + nPadDims + rankDiff, rankDiff, 0);
 
-    // Split this into head (lower padding) and foot (upper padding), and reverse them because 
-    // CNTK dimensions are in reverse order than ONNX. 
-    auto numOperandDims = pads.size() / 2;
-    std::vector<size_t> head(pads.rbegin() + numOperandDims, pads.rend()); // The first half (lower) reversed.
-    std::vector<size_t> foot(pads.rbegin(), pads.rbegin() + numOperandDims); // The second half (upper) reversed.
-
-    return std::make_pair(head, foot);
+    return SplitAndReverseVec(pads);
 }
 
 FunctionPtr ONNXToCNTKHelper::CreateFunction(const Node *node, const std::vector<Variable> &inputs)
@@ -1396,6 +1402,38 @@ FunctionPtr ONNXToCNTKHelper::CreateFunction(const Node *node, const std::vector
         std::vector<Axis> argsortedPermutation = ArgsortAxis(permutation);
         FunctionPtr cntkFunction = Transpose(inputs[0], argsortedPermutation, ToWString(node->Name()));
         return cntkFunction;
+    }
+    else if (onnxOpName == "Pad")
+    {
+        std::vector<int64_t> pads = GetNamedAttributeAsInt64Vec(node, "pads");
+        if (pads.size() != 2* inputs[0].Shape().Rank())
+            LogicError("Pad: Incorrect length of 'pads' attribute in Pad op. Length of 'pads' attribute should be twice the number of dimensions in input tensor.");
+        auto padsPair = SplitAndReverseVec(pads);
+
+        CNTK::PaddingMode cntkPaddingMode;
+        double cntkConstantValue = 0.0;
+        auto mode = GetNamedAttributeAsString(node, "mode", "constant");
+        std::transform(mode.begin(), mode.end(), mode.begin(), ::tolower);
+        if (mode == "constant")
+            cntkPaddingMode = CNTK::PaddingMode::CONSTANTPAD;
+        else if (mode == "reflect")
+            cntkPaddingMode = CNTK::PaddingMode::REFLECTPAD;
+        else if (mode == "edge")
+            NOT_IMPLEMENTED
+        else
+            LogicError("Pad: Invalid 'mode' attribute value, %s, specified for Pad node.", mode);
+
+        if (cntkPaddingMode == CNTK::PaddingMode::CONSTANTPAD)
+            cntkConstantValue = static_cast<double>(GetNamedAttributeAsFloat(node, "value", 0.0));
+
+        FunctionPtr cntkPadFunction = Pad(inputs[0],
+            cntkPaddingMode,
+            padsPair.first,
+            padsPair.second,
+            cntkConstantValue,
+            ToWString(node->Name()));
+
+        return cntkPadFunction;
     }
     else if (onnxOpName == "Gather")
     {

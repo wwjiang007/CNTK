@@ -291,6 +291,12 @@ namespace ONNX
             { L"TransposeAxes", "Transpose" },
             { L"axisVec", "perm" },
         } } },
+        { L"Pad",{ {
+            { L"Pad", "Pad" },
+            { L"mode", "mode" },
+            { L"pattern", "pads" },
+            { L"constant_value", "value"},
+            } } },
         { L"Gather", { {
             { L"Gather", "Gather" },
         } } },

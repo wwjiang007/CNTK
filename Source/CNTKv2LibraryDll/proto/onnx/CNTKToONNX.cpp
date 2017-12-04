@@ -881,6 +881,28 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
             node->AddAttribute(attributesMap[L"beginIndexVec"], ToINTS(beginIndex));
             node->AddAttribute(attributesMap[L"endIndexVec"], ToINTS(endIndex));
         }
+        if (src->OpName() == L"Pad")
+        {
+            auto value = (float)src->Attributes()[L"paddingConstantValue"].Value<double>();
+            auto mode = (size_t)src->Attributes()[L"paddingMode"].Value<size_t>();
+            auto head = ToINTS(AsVector<size_t>(src->Attributes()[L"paddingHead"].Value<std::vector<DictionaryValue>>()));
+            auto foot = ToINTS(AsVector<size_t>(src->Attributes()[L"paddingFoot"].Value<std::vector<DictionaryValue>>()));
+            head.insert(head.end(), foot.begin(), foot.end());
+            string modeStr;
+            if (mode == 0)
+                modeStr = "constant";
+            else if (mode == 1)
+                modeStr = "reflect";
+            else if (mode == 2)
+                NOT_IMPLEMENTED
+            else 
+                LogicError("Invalid 'mode' value encountered in CNTK Pad node.");
+
+            node->AddAttribute("mode", modeStr);
+            node->AddAttribute("pads", head);
+            if (mode == 0)
+                node->AddAttribute("value", value);
+        }
         else if (src->OpName() == L"Softmax")
         {
             Axis axis = Axis(0);
