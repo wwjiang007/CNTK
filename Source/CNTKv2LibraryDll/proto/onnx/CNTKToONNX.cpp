@@ -149,10 +149,9 @@ namespace CNTK
         //
         static bool FilterInput(const FunctionPtr& src, const CNTK::Variable& input, size_t inputIndex);
 
-
         static std::tuple<NDShape, bool, int> AdjustForBroadcastShape(
-            const NDShape &lhs, const NDShape &rhs, bool lhsHasBatchAxis);
-
+            const NDShape &lhs, const NDShape &rhs, bool lhsHasBatchAxis, bool rhsHasBatchAxis);
+    
         //
         // Argument orders between CNTK and ONNX aren't always the same.
         //
@@ -485,14 +484,23 @@ This method shall be called when constructing rhs (input[0]) of an elementwise o
 and when constructing the rhs node itself.
 */
 std::tuple<NDShape, bool, int> CNTKToONNXHelper::AdjustForBroadcastShape(
-    const NDShape &lhs, const NDShape &rhs, bool lhsHasBatchAxis)
+    const NDShape &lhs, const NDShape &rhs, bool lhsHasBatchAxis, bool rhsHasBatchAxis)
 {
     // in case of batch axis, all constants need to be broadcasted.
     bool broadCast = false;
     int axis = 0;
-    if (lhs.Rank() != rhs.Rank())
+    if (lhs.Rank() < rhs.Rank())
     {
-        return std::tuple<NDShape, bool, int>(rhs, lhsHasBatchAxis, axis + 1);
+        // this is in contradict with ONNX. However it exists in CNTK. 
+        // LogicError("in case of element wise binary ops, rank of lhs shall not be less than the rand of the rhs");
+        return std::tuple<NDShape, bool, int>(rhs, false, 0);
+    }
+    else if (lhs.Rank() > rhs.Rank())
+    { 
+        axis = lhs.Rank() - rhs.Rank();
+        if (lhsHasBatchAxis)
+            axis++;
+        return std::tuple<NDShape, bool, int>(rhs, true, axis);
     }
 
     // dimension are reversed in CNTK comparing with ONNX
@@ -521,7 +529,12 @@ std::tuple<NDShape, bool, int> CNTKToONNXHelper::AdjustForBroadcastShape(
 
     if (!broadCast)
     {
-        return std::tuple<NDShape, bool, int>(rhs, lhsHasBatchAxis, axis + 1);
+        // now all dims matches. there is however a case
+        // where lhs has batch axis but not rhs. we need to force broadcast so that
+        // [#][3,4,5] with [][3,4,5] is treated as broadcast to pass caffe2.
+        // in this case, start_axis is 1 (after the batch axis).
+        bool forceBroadCast = lhsHasBatchAxis && !rhsHasBatchAxis;
+        return std::tuple<NDShape, bool, int>(rhs, forceBroadCast, 1);
     }
     std::vector<size_t> dimensions;
     for (int i = axis_start > 0 ? axis_start : 0; i < axis_stop; i++)
@@ -607,7 +620,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateNode(const FunctionPtr& src,
 
             // element wise ops with broadcast - the second (rhs) shall be a constant to be broadcasted 
             // onto the first variable
-            bool reshapeNeededForBroadcastConstant = isConstant &&
+            bool reshapeNeededForBroadcastConstant =
                 inputIndex == 1 &&
                 src->Inputs().size() == 2 &&
                 ((src->OpName() == L"Plus") || (src->OpName() == L"Minus") ||
@@ -622,8 +635,9 @@ ONNXIR::Node* CNTKToONNXHelper::CreateNode(const FunctionPtr& src,
                 int axis = 0;
                 std::tie<NDShape, bool, int>(broadcastShape, broadcast, axis) =
                     AdjustForBroadcastShape(src->Inputs()[0].Shape(), src->Inputs()[1].Shape(),
-                        src->Inputs()[0].HasBatchAxis() && !src->Inputs()[1].HasBatchAxis());
-                inputArgType = broadcast ? ToTypeProto(broadcastShape) : ToTypeProto(input.Shape());
+                        src->Inputs()[0].HasBatchAxis(), src->Inputs()[1].HasBatchAxis());
+                inputArgType = broadcast ? ToTypeProto(broadcastShape) : 
+                    ToTypeProto(input.Shape(), input.HasBatchAxis());
             }
             else
             {
@@ -914,7 +928,7 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
             int axis = 0;
             std::tie<NDShape, bool, int>(broadcastShape, broadcast, axis) =
                 AdjustForBroadcastShape(src->Inputs()[0].Shape(), src->Inputs()[1].Shape(),
-                    src->Inputs()[0].HasBatchAxis() && !src->Inputs()[1].HasBatchAxis());
+                    src->Inputs()[0].HasBatchAxis(), src->Inputs()[1].HasBatchAxis());
 
             node->AddAttribute("broadcast", (int64_t)(broadcast ? 1 : 0));
             if (broadcast && axis >= 0)
