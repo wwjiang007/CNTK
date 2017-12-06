@@ -51,9 +51,8 @@ public:
 
     virtual void ForwardProp(const FrameRange& fr) override
     {      
-        std::cout << "INOVKING UDF FORWARD PATH 1:" << fr.IsAllFrames()<<std::endl;
-        
-        this->m_outputsValue[0] = m_value;
+        //std::cout << "INOVKING UDF FORWARD PATH 1:" << fr.IsAllFrames()<<std::endl;        
+        //this->m_outputsValue[0]->SetValue(ValueFor(fr));
 
         // Get the arguments of the external function
         auto arguments = m_externalFunction->Arguments();
@@ -107,8 +106,9 @@ public:
                     SetDims(this->m_outputsShape[i], HasMBLayout());
             }
 
+            this->m_outputsValue[i] = std::make_shared<Microsoft::MSR::CNTK::Matrix<ElemType>>(m_deviceId);
             this->m_outputsValue[i]->SetValue(*outputMatrixAndLayout.first);
-
+            
             if ((this->m_outputsMBLayout[i] != nullptr) && (outputMatrixAndLayout.second == nullptr))
                 LogicError("The UserDefinedFunction node has a non-null output MBLayout but none found from the '%S' user Function::Forward output Value", m_externalFunction->Name().c_str());
             else if ((this->m_outputsMBLayout[i] == nullptr) && (outputMatrixAndLayout.second != nullptr))
@@ -140,7 +140,7 @@ public:
         if (m_currentBackpropStatePtr == nullptr)
             return;
 
-        this->m_outputsGradient[0]->SetValue(GradientFor(fr));
+        //this->m_outputsGradient[0] = ->SetValue(GradientFor(fr));
 
         std::unordered_map<::CNTK::Variable, ::CNTK::ValuePtr> outputGradientValues;
         auto outputs = m_externalFunction->Outputs();
@@ -151,6 +151,8 @@ public:
         for (size_t i = 0; i < outputs.size(); ++i)
         {
             auto output = outputs[i];
+            this->m_outputsGradient[i] = std::make_shared<Microsoft::MSR::CNTK::Matrix<ElemType>>(m_deviceId);
+            this->m_outputsGradient[i]->SetValue(GradientFor(fr));
 
             // TODO: We unpack the same output gradients each time this method is called for a different input.
             // We should be able to cache the unpacked values during backpropagation of gradients to the first
@@ -211,11 +213,10 @@ public:
     virtual void Validate(bool isFinalValidationPass) override
     {
         //Check all the inputs and outputs to see if the inputs has the same dynamic axis as the output. That is the computation node we need to get the mblayout from. create new only if we cannot find this.
-
-
+        
         Base::Validate(isFinalValidationPass);
-        //InferMBLayoutFromInputsForStandardCase(isFinalValidationPass);
 
+        // Find the output with a dynamic axis and use that, otherwise create new.
         auto outputs = m_externalFunction->Outputs();
         bool layoutNotInitialized = (m_pMBLayout == nullptr);
         for (size_t i = 0; i < outputs.size(); ++i)
@@ -234,17 +235,17 @@ public:
             {
                 auto outputDynamicAxes = output.DynamicAxes();
                 if (outputDynamicAxes.empty())
-                {
-                    this->m_outputsHasNewMBLayout[i] = true;
+                {                    
                     this->m_outputsMBLayout[i] = nullptr;
                 }
                 else
                 {
                     this->m_outputsMBLayout[i] = make_shared<MBLayout>(); // this generates a new layout                    
                     this->m_outputsMBLayout[i]->SetUniqueAxisName(InternalDynamicAxisNameFromDynamicAxes(output.DynamicAxes()));
-                    this->m_outputsHasNewMBLayout[i] = true;
+                       
                 }
-            }
+                this->m_outputsHasNewMBLayout[i] = true;
+            }         
 
             for (size_t k = 0; k < outputNDShape.Rank(); ++k)
             {
@@ -257,7 +258,10 @@ public:
             if (i == 0)
             {
                 if (layoutNotInitialized)
-                    m_pMBLayout = this->m_outputsMBLayout[i];
+                {
+                    InferMBLayoutFromInputsForStandardCase(isFinalValidationPass);
+                    //m_pMBLayout = this->m_outputsMBLayout[i];
+                }
 
                 SetDims(this->m_outputsShape[i], HasMBLayout());
             }
