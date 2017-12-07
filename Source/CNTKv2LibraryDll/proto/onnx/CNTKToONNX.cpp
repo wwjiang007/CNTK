@@ -149,6 +149,11 @@ namespace CNTK
         //
         static bool FilterInput(const FunctionPtr& src, const CNTK::Variable& input, size_t inputIndex);
 
+        //
+        // Given input tersor shapes of a CNTK element wise operation, figure out 
+        // the shape of the second input to ONNX operation.
+        // It also returns whether broadcast is required and the axis for broadcast.
+        //
         static std::tuple<NDShape, bool, int> AdjustForBroadcastShape(
             const NDShape &lhs, const NDShape &rhs, bool lhsHasBatchAxis, bool rhsHasBatchAxis);
     
@@ -491,8 +496,11 @@ std::tuple<NDShape, bool, int> CNTKToONNXHelper::AdjustForBroadcastShape(
     int axis = 0;
     if (lhs.Rank() < rhs.Rank())
     {
-        // this is in contradict with ONNX. However it exists in CNTK. 
-        // LogicError("in case of element wise binary ops, rank of lhs shall not be less than the rand of the rhs");
+        // this is in contradiction with ONNX. However it exists in CNTK.
+        // For example, CNTK allows this:
+        // C.plus([1, 2, 3], [[2,  3,  4], [ 4,  5,  6]])
+        // On the otherhand, ONNX requires first input to
+        // have equal or higher rank than the second input.
         return std::tuple<NDShape, bool, int>(rhs, false, 0);
     }
     else if (lhs.Rank() > rhs.Rank())

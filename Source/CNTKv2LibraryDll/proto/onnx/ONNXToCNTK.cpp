@@ -38,7 +38,7 @@ namespace CNTK
             const DeviceDescriptor& computeDevice);
         static FunctionPtr CreateFunction(const Node *node, const std::vector<Variable> &inputs);
 
-        static bool IsSecondInputOfElementWiseOpsWithBraodcast(const Node *parentNode, const NodeArg *nodeArg);
+        static bool IsSecondInputOfElementWiseOpsWithBroadcast(const Node *parentNode, const NodeArg *nodeArg);
 
         static std::vector<Axis> AttributeProtoToAxes(const AttributeProto &attributeProto);
         static onnx::TypeProto FromINTS(const std::vector<int64_t> &shape);
@@ -415,12 +415,12 @@ Constant ONNXToCNTKHelper::CreateConstant(const onnx::TensorProto &valueProto, c
     }
 }
 
-bool ONNXToCNTKHelper::IsSecondInputOfElementWiseOpsWithBraodcast(const Node *parentNode, const NodeArg *nodeArg)
+bool ONNXToCNTKHelper::IsSecondInputOfElementWiseOpsWithBroadcast(const Node *parentNode, const NodeArg *nodeArg)
 {
     if (parentNode->OpType() == "Add" || parentNode->OpType() == "Sub" ||
         parentNode->OpType() == "Div" || parentNode->OpType() == "Mul")
     {
-        if (HasNamedAttribute(parentNode, "broadcast") && 1 == (int)GetNamedAttributeAsInt64(parentNode, "broadcast"))
+        if (HasNamedAttribute(parentNode, "broadcast") && 1 == static_cast<int>(GetNamedAttributeAsInt64(parentNode, "broadcast")))
         {
             const std::vector<NodeArg>& inputNodeArgs = parentNode->InputDefs();
             for (int index = 0; index < inputNodeArgs.size(); index++)
@@ -454,7 +454,7 @@ Variable ONNXToCNTKHelper::CreateLeafVariableOrConstant(const NodeArg *nodeArg,
     // in ONNX constants may also be a leaf with values saved in initializer
     // here we know it is not an ONNX constant so reshape the variable to trim off last dim;
     NDShape shape = FromTensorShapeProto(*shapeProto);
-    if (!IsSecondInputOfElementWiseOpsWithBraodcast(parentNode, nodeArg))
+    if (!IsSecondInputOfElementWiseOpsWithBroadcast(parentNode, nodeArg))
     {
         // can only do this when broadcast is 0
         shape = shape.SubShape(0, shape.Rank() - 1);
@@ -773,41 +773,40 @@ std::pair<Variable, Variable> ONNXToCNTKHelper::BroadcastElementWiseInput(
 {
     auto shape0 = input0.Shape();
     auto shape1 = input1.Shape();
-    NDShape newShape;
 
-    // set doThisAfterBoardcastInCNTKFix = true when loading FB models
-    bool doThisAfterBoardcastInCNTKFix = true;
-    if (doThisAfterBoardcastInCNTKFix)
+    if (bool broadcast = GetNamedAttributeAsInt64(node, "broadcast", 0) == 1 && HasNamedAttribute(node, "axis"))
     {
-        if (bool broadcast = GetNamedAttributeAsInt64(node, "broadcast", 0) == 1 && HasNamedAttribute(node, "axis"))
+        if (shape0.Rank() < shape1.Rank())
         {
-            if (shape0.Rank() < shape1.Rank())
+            LogicError("in case of element wise binary ops, rank of lhs shall not be less than the rand of the rhs");
+        }
+        else if (shape0.Rank() > shape1.Rank())
+        {
+            // axis = 3, ONNX: [2, 3, 4, 5] + [3, 4] with broadcast = 1 and axis = 1
+            // coming in this call:
+            // input0: 5,4,3,2 
+            // input1: 4,3 -> 1,4,3,1
+            int axis = static_cast<int>(GetNamedAttributeAsInt64(node, "axis"));
+            // axis is in ONNX. Take into consideration with input0 has batch axis.
+            if (input0.HasBatchAxis())
             {
-                LogicError("in case of element wise binary ops, rank of lhs shall not be less than the rand of the rhs");
+                axis--;
             }
-            else if (shape0.Rank() > shape1.Rank())
-            {
-                // axis = 3, ONNX: [2, 3, 4, 5] + [3, 4] with broadcast = 1 and axis = 1
-                // coming in this call:
-                // input0: 5,4,3,2 
-                // input1: 4,3 -> 1,4,3,1
-                int axis = (int)GetNamedAttributeAsInt64(node, "axis");
-                // axis is in ONNX. Take into consideration with input0 has batch axis.
-                if (input0.HasBatchAxis())
-                {
-                    axis--;
-                }
 
-                int index = shape0.Rank() - axis - shape1.Rank();
-                for (size_t i = 0; i < shape0.Rank(); i++)
-                {
-                    if (i < index || i >= index + shape1.Rank())
-                        newShape = newShape.AppendShape({ 1 });
-                    else 
-                        newShape = newShape.AppendShape({ shape1[i - index] });
-                }
-                return{ input0, Reshape(input1, newShape) };
+            NDShape newShape;
+            int index = shape0.Rank() - axis - shape1.Rank();
+            for (size_t i = 0; i < shape0.Rank(); i++)
+            {
+                if (i < index || i >= index + shape1.Rank())
+                    newShape = newShape.AppendShape({ 1 });
+                else 
+                    newShape = newShape.AppendShape({ shape1[i - index] });
             }
+            return{ input0, Reshape(input1, newShape) };
+        }
+        else
+        {
+            return{ input0 , input1 };
         }
     }
 
