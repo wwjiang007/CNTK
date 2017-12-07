@@ -51,8 +51,9 @@ public:
 
     virtual void ForwardProp(const FrameRange& fr) override
     {      
-        //std::cout << "INOVKING UDF FORWARD PATH 1:" << fr.IsAllFrames()<<std::endl;        
-        //this->m_outputsValue[0]->SetValue(ValueFor(fr));
+        // The first output value is set as this node's output. Others are mapped
+        // using OutputMultiplexerNode when creating the computation network.
+        this->m_outputsValue[0] = m_value;
 
         // Get the arguments of the external function
         auto arguments = m_externalFunction->Arguments();
@@ -68,7 +69,7 @@ public:
 
             auto argumentVar = arguments[j++];
             auto inputValueForFrame = input.ValueFor(fr);
-
+           
             auto argumentShape = ::CNTK::AsNDShape(input.GetSampleLayout());
             auto argumentValue = ::CNTK::Utils::GetValueObjectFromCNTKImplMatrixAndMBLayout(argumentShape, argumentVar.DynamicAxes(), inputValueForFrame, input.GetMBLayout());
             argumentValues.insert(std::make_pair(argumentVar, argumentValue));
@@ -95,7 +96,7 @@ public:
             auto output = outputs[i];
             ::CNTK::NDShape inferredVarShape;
             auto outputMatrixAndLayout = ::CNTK::Utils::GetCNTKImplMatrixAndMBLayoutFromValueObject<ElemType>(output, outputValues[output], &inferredVarShape);
-
+          
             if (inferredVarShape.IsUnknown() || inferredVarShape.HasUnboundDimension())
                 LogicError("The output shape '%S' of an external user defined Function '%S' must be fully defined.", inferredVarShape.AsString().c_str(), m_externalFunction->AsString().c_str());
 
@@ -106,8 +107,11 @@ public:
                     SetDims(this->m_outputsShape[i], HasMBLayout());
             }
 
-            this->m_outputsValue[i] = std::make_shared<Microsoft::MSR::CNTK::Matrix<ElemType>>(m_deviceId);
-            this->m_outputsValue[i]->SetValue(*outputMatrixAndLayout.first);
+            if (i != 0)
+            {
+                this->m_outputsValue[i] = std::make_shared<Microsoft::MSR::CNTK::Matrix<ElemType>>(m_deviceId);
+            }
+            this->m_outputsValue[i]->SetValue(*outputMatrixAndLayout.first);  
             
             if ((this->m_outputsMBLayout[i] != nullptr) && (outputMatrixAndLayout.second == nullptr))
                 LogicError("The UserDefinedFunction node has a non-null output MBLayout but none found from the '%S' user Function::Forward output Value", m_externalFunction->Name().c_str());
@@ -133,15 +137,13 @@ public:
 
     virtual void BackpropTo(const size_t inputIndex, const FrameRange& fr) override
     {
-        // Forward is called for all inputs, but the framerange is given. Is it valid for all inputs?
-        // Backprop state has to come from forward. So do we need it to be for each input? inputIndex?
-
-
         if (m_currentBackpropStatePtr == nullptr)
             return;
 
-        //this->m_outputsGradient[0] = ->SetValue(GradientFor(fr));
-
+        // Similar to the output, the gradient 0 is set to this node's
+        // gradient. other values are handled by OutputMultiplexerNode.
+        this->m_outputsGradient[0] = m_gradient;
+        
         std::unordered_map<::CNTK::Variable, ::CNTK::ValuePtr> outputGradientValues;
         auto outputs = m_externalFunction->Outputs();
         bool noOutputNeedsGradient = std::all_of(outputs.begin(), outputs.end(), [](const ::CNTK::Variable& outVar) { return !outVar.NeedsGradient(); });
@@ -151,8 +153,10 @@ public:
         for (size_t i = 0; i < outputs.size(); ++i)
         {
             auto output = outputs[i];
-            this->m_outputsGradient[i] = std::make_shared<Microsoft::MSR::CNTK::Matrix<ElemType>>(m_deviceId);
-            this->m_outputsGradient[i]->SetValue(GradientFor(fr));
+            if (i != 0)
+            {
+                this->m_outputsGradient[i] = std::make_shared<Microsoft::MSR::CNTK::Matrix<ElemType>>(m_deviceId);
+            }           
 
             // TODO: We unpack the same output gradients each time this method is called for a different input.
             // We should be able to cache the unpacked values during backpropagation of gradients to the first
@@ -198,6 +202,7 @@ public:
                 continue;
 
             auto newInputGradientMatrixAndLayout = ::CNTK::Utils::GetCNTKImplMatrixAndMBLayoutFromValueObject<ElemType>(input, inputGradientValue);
+            
             InputRef(i).GradientFor(fr) += *newInputGradientMatrixAndLayout.first;
 
             if (*InputRef(i).GetMBLayout() != *newInputGradientMatrixAndLayout.second)
