@@ -303,6 +303,9 @@ namespace ONNX
         { L"DepthToSpace",{ {
             { L"DepthToSpace", "DepthToSpace" },
         } } },
+        { L"SpaceToDepth",{ {
+            { L"SpaceToDepth", "SpaceToDepth" },
+            } } },
         // { L"", "Squeeze" },
     };
 

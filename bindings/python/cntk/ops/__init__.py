@@ -3348,7 +3348,7 @@ def depth_to_space(operand, block_size, name=''):
 
     This operation is useful for implementing sub-pixel convolution that is part of models  
     for image super-resolution (see [1]). It rearranges elements of an input tensor of shape 
-    (Cxbxb, H, W) to a tensor of shape (C, bxH, bxW).
+    (Cxbxb, H, W) to a tensor of shape (C, bxH, bxW), where b is the `block_size`.
     
     Example:
         >>> x = np.array(np.reshape(range(8), (8, 1, 1)), dtype=np.float32)
@@ -3369,7 +3369,7 @@ def depth_to_space(operand, block_size, name=''):
     Args:
         operand: Input tensor, with dimensions :math:`[C \\times H \\times W]`.
         block_size (int): Integer value. This defines the size of the spatial block where the 
-         depth elements move to. Number of channels in the input tensor C must be divisible 
+         depth elements move to. Number of channels, C, in the input tensor must be divisible 
          by math:`(block_size \\times block_size)`
         name (str, optional): the name of the Function instance in the network
     Returns:
@@ -3383,3 +3383,49 @@ def depth_to_space(operand, block_size, name=''):
     if not float(block_size).is_integer():
         raise ValueError('block_size must be an integer.')
     return depth_to_space(operand, block_size, name)
+
+@typemap
+def space_to_depth(operand, block_size, name=''):
+    '''
+    Rearranges elements in the input tensor from the spatial dimensions to the depth dimension.
+
+    This is the reverse transformation of depth_to_space. This operation is useful for implementing 
+    and testing sub-pixel convolution that is part of models for image super-resolution (see [1]).
+    It rearranges elements of an input tensor of shape (C, H, W) to a tensor of shape (C*b*b, H/b, W/b),
+    where b is the `block_size`, by rearranging non-overlapping spatial blocks of size `block_size` x `block_size`
+    into the depth/channel dimension at each location.
+    
+    Example:
+        >>> x = np.random.randint(low=0, high=100, size=(1, 4, 6)).astype(np.float32)
+        >>> a = C.input_variable((1, 4, 6))
+        >>> s2d_op = C.space_to_depth(a, block_size=2)
+        >>> s2d_op.eval({a:x})
+        array([[[[ 44.,   4.,  14.],
+                 [ 79.,  37.,  68.]],
+
+                [[ 94.,  42.,   7.],
+                 [  4.,   5.,   4.]],
+
+                [[  1.,  49.,   4.],
+                 [ 95.,  51.,  41.]],
+
+                [[ 28.,  39.,  44.],
+                 [ 25.,  43.,  79.]]]], dtype=float32)
+
+    Args:
+        operand: Input tensor, with dimensions :math:`[C \\times H \\times W]`.
+        block_size (int): Integer value. This defines the size of the spatial block whose elements
+         are moved to the depth dimension. Size of spatial dimensions (H, W) in the input tensor
+         must be divisible by math:`block_size`
+        name (str, optional): the name of the Function instance in the network
+    Returns:
+        :class:`~cntk.ops.functions.Function`
+
+    See also:
+        [1] W. Shi et. al. `: Real-Time Single Image and Video Super-Resolution Using an Efficient Sub-Pixel Convolutional Neural Network <https://arxiv.org/abs/1609.05158>`_.
+    '''
+    from cntk.cntk_py import space_to_depth
+    operand = sanitize_input(operand, get_data_type(operand))
+    if not float(block_size).is_integer():
+        raise ValueError('block_size must be an integer.')
+    return space_to_depth(operand, block_size, name)

@@ -4184,6 +4184,11 @@ namespace CNTK
     CNTK_API FunctionPtr DepthToSpace(const Variable& operand, size_t blockSize, const std::wstring& name = L"");
 
     ///
+    /// Create an instance of the CNTK built-in Space-To-Depth operation for an operand and specified blockSize.
+    ///
+    CNTK_API FunctionPtr SpaceToDepth(const Variable& operand, size_t blockSize, const std::wstring& name = L"");
+
+    ///
     /// Create an instance of the CNTK built-in LambdaRank loss an effective proxy for optimizing the NDCG metric
     ///
     CNTK_API FunctionPtr LambdaRank(const Variable& prediction, const Variable& gains, const Variable& groupId, const std::wstring& name = L"");

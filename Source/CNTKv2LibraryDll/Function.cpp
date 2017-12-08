@@ -1817,7 +1817,7 @@ namespace CNTK
             if (inputShape.Rank() != 3)
                 LogicError("DepthToSpace: Input operand (shape: %S) must be a 3-dimensional tensor, e.g. a 2D image with channels.", inputShape.AsString().c_str());
             if (inputShape[2] % (blockSize*blockSize) != 0)
-                LogicError("DepthToSpace: Number of channels in the operand (%d) must be divisible by (blocksize x blocksize), i.e., (%d x %d).", inputShape[2], blockSize, blockSize);
+                LogicError("DepthToSpace: Number of channels in the operand (%zu) must be divisible by (blocksize x blocksize), i.e., (%zu x %zu).", inputShape[2], blockSize, blockSize);
         }
 
         FunctionPtr inputView = Reshape(inputPlaceholder, { blockSize, blockSize, NDShape::InferredDimension }, Axis(2), Axis(3));
@@ -1827,6 +1827,31 @@ namespace CNTK
         auto merge01Out = Reshape(merge23Out, { NDShape::InferredDimension }, Axis(0), Axis(2));
 
         return AsBlock(std::move(merge01Out), { { inputPlaceholder, input } }, std::move(additionalProperties), L"DepthToSpace", name);
+    }
+
+    FunctionPtr SpaceToDepth(const Variable& input, size_t blockSize, const std::wstring& name)
+    {
+        auto additionalProperties = Dictionary();
+        additionalProperties[PrimitiveFunction::AttributeNameBlockSize] = blockSize;
+
+        auto inputPlaceholder = PlaceholderVariable(L"input");
+
+        if (!input.IsPlaceholder())
+        {
+            NDShape inputShape = input.Shape();
+            if (inputShape.Rank() != 3)
+                LogicError("SpaceToDepth: Input operand (shape: %S) must be a 3-dimensional tensor, e.g. a 2D image with channels.", inputShape.AsString().c_str());
+            if ((inputShape[0] % blockSize != 0) || (inputShape[1] % blockSize != 0))
+                LogicError("SpaceToDepth: All spatial dimensions in the operand (%zu x %zu) must be divisible by blocksize (%zu).", inputShape[0], inputShape[1], blockSize);
+        }
+
+        FunctionPtr reshape01out = Reshape(inputPlaceholder, { blockSize, NDShape::InferredDimension }, Axis(0), Axis(1));
+        FunctionPtr reshape23out = Reshape(reshape01out, { blockSize, NDShape::InferredDimension }, Axis(2), Axis(3));
+        std::vector<Axis> axisShufflePermutation({ Axis(1), Axis(3), Axis(0), Axis(2), Axis(4) });
+        auto shuffleOut = Transpose(reshape23out, axisShufflePermutation);
+        auto merge234Out = Reshape(shuffleOut, { NDShape::InferredDimension }, Axis(2), Axis::EndStaticAxis());
+
+        return AsBlock(std::move(merge234Out), { { inputPlaceholder, input } }, std::move(additionalProperties), L"SpaceToDepth", name);
     }
 
     FunctionPtr LambdaRank(const Variable& prediction, const Variable& gains, const Variable& groupId, const std::wstring& name)
