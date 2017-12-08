@@ -1925,6 +1925,12 @@ namespace CNTK
         ///
         CNTK_API size_t CurrentValueTimeStamp() const;
 
+        ///
+        /// Returns the Value associated with the Variable.
+        /// Internally it uses less restrictive Value() method.
+        ///
+        CNTK_API const NDArrayViewPtr GetValue() const;
+
     protected:
 #ifdef SWIGPYTHON
     public:

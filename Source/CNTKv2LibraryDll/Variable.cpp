@@ -111,6 +111,12 @@ namespace CNTK
             return Combine({ *this });
     }
 
+    const NDArrayViewPtr Variable::GetValue() const
+    {
+        return Value();
+    }
+
+
     NDArrayViewPtr Variable::Value() const
     {
         if (!IsConstant() && !IsParameter())
