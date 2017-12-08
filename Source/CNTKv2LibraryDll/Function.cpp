@@ -1669,7 +1669,7 @@ namespace CNTK
         return AsComposite(MakeSharedObject<PrimitiveFunction>(PrimitiveOpType::Logistic, operands, Dictionary(), name), name);
     }
 
-    CNTK_API FunctionPtr NCELoss(const Variable& weights, const Variable& biases, const Variable& inputs, const Variable& labels, const Constant& noiseWeights, size_t numSamples, bool allowDuplicates, unsigned long seed, const std::wstring& name)
+    FunctionPtr NCELoss(const Variable& weights, const Variable& biases, const Variable& inputs, const Variable& labels, const Constant& noiseWeights, size_t numSamples, bool allowDuplicates, unsigned long seed, const std::wstring& name)
     {
         auto inputsPlaceholder = PlaceholderVariable(L"inputs");
         auto labelsPlaceholder = PlaceholderVariable(L"labels");
@@ -1768,6 +1768,31 @@ namespace CNTK
         auto loss = lossOnPositives + lossOnNegatives;
 
         return AsBlock(std::move(loss), { { inputsPlaceholder, inputs }, { labelsPlaceholder, labels} }, L"NCE", name);
+    }
+
+    FunctionPtr DepthToSpace(const Variable& input, size_t blockSize, const std::wstring& name)
+    {
+        auto additionalProperties = Dictionary();
+        additionalProperties[PrimitiveFunction::AttributeNameBlockSize] = blockSize;
+
+        auto inputPlaceholder = PlaceholderVariable(L"input");
+
+        if (!input.IsPlaceholder())
+        {
+            NDShape inputShape = input.Shape();
+            if (inputShape.Rank() != 3)
+                LogicError("DepthToSpace: Input operand (shape: %S) must be a 3-dimensional tensor, e.g. a 2D image with channels.", inputShape.AsString().c_str());
+            if (inputShape[2] % (blockSize*blockSize) != 0)
+                LogicError("DepthToSpace: Number of channels in the operand (%d) must be divisible by (blocksize x blocksize), i.e., (%d x %d).", inputShape[2], blockSize, blockSize);
+        }
+
+        FunctionPtr inputView = Reshape(inputPlaceholder, { blockSize, blockSize, NDShape::InferredDimension }, Axis(2), Axis(3));
+        std::vector<Axis> axisShufflePermutation({ Axis(2), Axis(0), Axis(3), Axis(1), Axis(4) });
+        auto shuffleOut = Transpose(inputView, axisShufflePermutation);
+        auto merge23Out = Reshape(shuffleOut, { NDShape::InferredDimension }, Axis(2), Axis(4));
+        auto merge01Out = Reshape(merge23Out, { NDShape::InferredDimension }, Axis(0), Axis(2));
+
+        return AsBlock(std::move(merge01Out), { { inputPlaceholder, input } }, std::move(additionalProperties), L"DepthToSpace", name);
     }
 
     FunctionPtr LambdaRank(const Variable& prediction, const Variable& gains, const Variable& groupId, const std::wstring& name)

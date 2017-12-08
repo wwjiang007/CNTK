@@ -98,5 +98,6 @@ namespace CNTK
     /*static*/ const std::wstring PrimitiveFunction::AttributeNameKernelShape = L"kernelShape";
     /*static*/ const std::wstring PrimitiveFunction::AttributeNameBias = L"bias";
     /*static*/ const std::wstring PrimitiveFunction::AttributeNameDepthRadius = L"depthRadius";
+    /*static*/ const std::wstring PrimitiveFunction::AttributeNameBlockSize = L"blockSize";
     /*static*/ const std::wstring PrimitiveFunction::AttributeNameCustomAttributes = L"customAttributes";
 }

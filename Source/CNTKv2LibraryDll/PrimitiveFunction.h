@@ -290,6 +290,7 @@ namespace CNTK
         static const std::wstring AttributeNameKernelShape;
         static const std::wstring AttributeNameBias;
         static const std::wstring AttributeNameDepthRadius;
+        static const std::wstring AttributeNameBlockSize;
         static const std::wstring AttributeNameCustomAttributes;
 
     protected:

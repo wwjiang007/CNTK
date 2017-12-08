@@ -1399,6 +1399,11 @@ FunctionPtr ONNXToCNTKHelper::CreateFunction(const Node *node, const std::vector
         FunctionPtr cntkFunction = GatherOp(inputs[0], inputs[1], ToWString(node->Name()));
         return cntkFunction;
     }
+    else if (onnxOpName == "DepthToSpace")
+    {
+        auto blockSize = GetNamedAttributeAsInt64(node, "blocksize", 1);
+        return DepthToSpace(inputs[0], static_cast<size_t>(blockSize), ToWString(node->Name()));
+    }
     else
     {
         // throw 

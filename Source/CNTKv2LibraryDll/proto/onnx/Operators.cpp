@@ -300,6 +300,9 @@ namespace ONNX
         { L"Gather", { {
             { L"Gather", "Gather" },
         } } },
+        { L"DepthToSpace",{ {
+            { L"DepthToSpace", "DepthToSpace" },
+        } } },
         // { L"", "Squeeze" },
     };
 
