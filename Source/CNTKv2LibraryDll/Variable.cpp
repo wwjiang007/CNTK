@@ -116,7 +116,6 @@ namespace CNTK
         return Value();
     }
 
-
     NDArrayViewPtr Variable::Value() const
     {
         if (!IsConstant() && !IsParameter())
