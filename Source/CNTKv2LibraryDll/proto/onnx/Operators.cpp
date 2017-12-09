@@ -95,10 +95,10 @@ namespace ONNX
             { L"Reshape", "Reshape" },
             { L"newShape", "shape" },
             } } },
-        //{ L"Reshape",{ {
-        //    { L"Reshape", "Flatten" },
-        //    { L"axis", "axis" },
-        //} } },
+        { L"Flatten",{ {
+            { L"Flatten", "Flatten" },
+            { L"axis", "axis" },
+        } } },
         // From Generator
         { L"RandomDistribution", { {
             { L"UniformRandom", "RandomUniform" },
@@ -145,6 +145,9 @@ namespace ONNX
         } } },
         { L"Abs", { {
             { L"Abs", "Abs" },
+        } } },
+        { L"Mean",{ {
+            { L"Mean", "Mean" },
         } } },
         { L"Reciprocal", { {
             { L"Reciprocal", "Reciprocal" },
@@ -205,6 +208,11 @@ namespace ONNX
         { L"ElementMin", { {
             { L"ElementMin", "Min" },
         } } },
+        { L"HardSigmoid",{ {
+            { L"HardSigmoid", "HardSigmoid" },
+            { L"alpha", "alpha" },
+            { L"beta", "beta" },
+            } } },
         { L"Hardmax",{ {
             { L"Hardmax", "Hardmax" },
             { L"axis", "axis" },
@@ -213,7 +221,11 @@ namespace ONNX
             { L"Softmax", "Softmax" },
             { L"axis", "axis" },
         } } },
-        { L"Softplus",{ {
+        { L"LogSoftmax",{ {
+            { L"LogSoftmax", "LogSoftmax" },
+            { L"axis", "axis" },
+        } } },
+            { L"Softplus",{ {
             { L"Softplus", "Softplus" },
         } } },
         { L"Equal",{ {
@@ -327,6 +339,8 @@ namespace ONNX
             { L"PReLU",{ 0 } },
             { L"ElementMax",{} },
             { L"ElementMin",{} },
+            { L"HardSigmoid",{ 0, 1, 2, 3 } },
+            { L"Mean",{ 0 } },
             { L"Softmax",{} },
             { L"LocalResponseNormalization",{ 0, 1, 2 } }
         };
