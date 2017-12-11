@@ -25,7 +25,7 @@ set CNTK_COMPONENT_VERSION=2.3.1
 python .\setup.py build_ext --inplace --force --compiler msvc
 if errorlevel 1 exit /b 1
 
-set PATH=%CD%\..\..\x64\Release;%PATH%
+set PATH=%CD%\..\..\x64\Release_NoOpt;%PATH%
 set PYTHONPATH=%CD%;%CD%\..\..\Scripts;%CD%\examples;%PYTHONPATH%
 
 pushd cntk\tests
