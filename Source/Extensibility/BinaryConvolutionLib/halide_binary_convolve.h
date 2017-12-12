@@ -1,5 +1,5 @@
-#ifndef BINCONV1A1W
-#define BINCONV1A1W
+#ifndef HALIDE_BINARY_CONVOLVE
+#define HALIDE_BINARY_CONVOLVE
 
 #include "Halide.h"
 
