@@ -1691,11 +1691,6 @@ def log_softmax(x, axis = None, name = ''):
     '''
     Computes the logsoftmax normalized values of x. That is, y = x - log(reduce_sum(exp(x), axis)).
 
-    Example:
-        >>> C.log_softmax([[1, 2, 3],[3,0,-4]], 1).eval()
-        array([[-2.40760565, -1.40760565, -0.40760565],
-               [-0.0494554 , -3.0494554 , -7.04945564]], dtype=float32)
-
     Args:
         x: numpy array or any :class:`~cntk.ops.functions.Function` that outputs a tensor
         axis (int): the axis of the inputs when coerced to 2D
