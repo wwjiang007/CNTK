@@ -784,6 +784,11 @@ namespace CNTK
         ///
         bool IsReadOnly() const { return m_isReadOnly; }
 
+        ///
+        /// Returns a boolean indicating if 'this' view is slice.
+        ///
+        CNTK_API bool IsSliceView();
+
         // TODO: The set methods should be offered in template from
         ///
         /// Fill 'this' NDArrayView with the specified value. The underlying DataType of 'this' view should be DataType::Float.
@@ -3385,6 +3390,16 @@ namespace CNTK
         }
 
         ///
+        ///  Recursively traverses the Function graph underlying 'this' Function invoking the provided functor for all visited nodes in the graph.
+        ///  A wrapper for PreorderTraverseFunctions.
+        ///
+        template <typename FunctionType>
+        void PreorderTraverse(const FunctionType& functor, bool traverseInsideBlockFunction = false)
+        {
+            PreorderTraverseFunctions(RootFunction(), functor, traverseInsideBlockFunction);
+        }
+
+        ///
         /// Find a function with the given name in the Function graph underlying 'this' Function.
         /// If more than one function with the same name, an exception is thrown.
         /// If nestedSearchInsideBlockFunction is true, all functions inside block functions are also searched for the given name.
@@ -3552,16 +3567,21 @@ namespace CNTK
             visitedFunctions.insert(rootFunction);
             functor(rootFunction);
 
-            if (traverseInsideBlockFunction && rootFunction->IsBlock())
-                PreorderTraverseFunctions(rootFunction->BlockRoot(), visitedFunctions, functor, traverseInsideBlockFunction);
-
-            std::vector<Variable> rootFunctionInputs = rootFunction->Inputs();
-            for (const auto& rootInput : rootFunctionInputs)
+            if (rootFunction->IsComposite())
+                PreorderTraverseFunctions(rootFunction->RootFunction(), visitedFunctions, functor, traverseInsideBlockFunction);
+            else
             {
-                if (rootInput.IsOutput() && visitedFunctions.find(rootInput.Owner()) == visitedFunctions.end())
+                if (traverseInsideBlockFunction && rootFunction->IsBlock())
+                    PreorderTraverseFunctions(rootFunction->BlockRoot(), visitedFunctions, functor, traverseInsideBlockFunction);
+
+                std::vector<Variable> rootFunctionInputs = rootFunction->Inputs();
+                for (const auto& rootInput : rootFunctionInputs)
                 {
-                    const auto& function = rootInput.Owner();
-                    PreorderTraverseFunctions(function, visitedFunctions, functor, traverseInsideBlockFunction);
+                    if (rootInput.IsOutput() && visitedFunctions.find(rootInput.Owner()) == visitedFunctions.end())
+                    {
+                        const auto& function = rootInput.Owner();
+                        PreorderTraverseFunctions(function, visitedFunctions, functor, traverseInsideBlockFunction);
+                    }
                 }
             }
         }
@@ -3804,6 +3824,18 @@ namespace CNTK
     /// Create an instance of the CNTK built-in hardmax operation on specified tensor input operand
     ///
     CNTK_API FunctionPtr Hardmax(const Variable& operand, const std::wstring& name = L"");
+
+    ///
+    /// Create an instance of the CNTK built-in top k operation over the first static axis on a
+    /// specified tensor input operand
+    ///
+    CNTK_API FunctionPtr TopK(const Variable& operand, size_t k, const std::wstring& name = L"");
+
+    ///
+    /// Create an instance of the CNTK built-in top k operation over the specified axis on a
+    /// specified tensor input operand
+    ///
+    CNTK_API FunctionPtr TopK(const Variable& operand, size_t k, const Axis& axis, const std::wstring& name = L"");
 
     ///
     /// Create an instance of the CNTK built-in transpose dimensions operation on specified tensor input operand
@@ -4139,13 +4171,22 @@ namespace CNTK
         return ClassificationError(prediction, labels, Axis(0), name);
     }
 
-
     ///
     /// Create an instance of the CNTK built-in noise contrastive estimation loss for specified operands. 
     ///
     CNTK_API FunctionPtr NCELoss(const Variable& weights, const Variable& biases, const Variable& inputs, const Variable& labels, 
         const Constant& noiseWeights, size_t numSamples, bool allowDuplicates=true, unsigned long seed = SentinelValueForAutoSelectRandomSeed,
         const std::wstring& name = L"");
+
+    ///
+    /// Create an instance of the CNTK built-in Depth-to-Space operation for an operand and specified blockSize.
+    ///
+    CNTK_API FunctionPtr DepthToSpace(const Variable& operand, size_t blockSize, const std::wstring& name = L"");
+
+    ///
+    /// Create an instance of the CNTK built-in Space-To-Depth operation for an operand and specified blockSize.
+    ///
+    CNTK_API FunctionPtr SpaceToDepth(const Variable& operand, size_t blockSize, const std::wstring& name = L"");
 
     ///
     /// Create an instance of the CNTK built-in LambdaRank loss an effective proxy for optimizing the NDCG metric
@@ -5028,6 +5069,15 @@ namespace CNTK
             return 1;
         }
 
+        //
+        // Method to do loss and eval metrics aggregation across workers before summarization. 
+        // Eg BlockMomentumUpdateAndFiltering BMUF needs an aggregation of metrics. 
+        // Arguments are local training loss value and local eval criterion value.
+        //
+        virtual void DoAggregateMetricsIfNeeded(NDArrayViewPtr&, NDArrayViewPtr&)
+        {
+        }
+
     protected:
         DistributedLearner(DistributedCommunicatorPtr communicator, LearnerPtr learner, size_t distributeAfterSamples)
             : Learner(learner? learner->Parameters() : std::vector<Parameter>(),
@@ -5139,6 +5189,14 @@ namespace CNTK
     protected:
         Evaluator(const FunctionPtr& evaluationFunction, const std::vector<ProgressWriterPtr>& progressWriters = {}, bool initializeCombined = true);
 
+        void SetCommunicator(DistributedCommunicatorPtr communicator)
+        {
+            if (m_communicator != nullptr)
+                LogicError("Communicator has already been initialized.");
+
+            m_communicator = communicator;
+        }
+
         // Helper functions.
         std::vector<Variable> GetCombinedEvalFunctionArgs() const;
         static size_t GetSampleCount(const Variable& var, const ValuePtr& value);
@@ -5165,6 +5223,7 @@ namespace CNTK
         const AccumulatorPtr m_aggregatedTestEvalCriterionValue;
         Variable             m_testSampleCountVar;
         FunctionPtr          m_combinedEvalFunction;
+        DistributedCommunicatorPtr m_communicator;
     };
 
     ///
