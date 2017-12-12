@@ -976,11 +976,9 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
         }
         else if (src->OpName() == L"Flatten")
         {
-            Axis axis;
+            Axis axis(0);
             if (src->Attributes().Contains(L"axis"))
                 axis = (Axis)(src->Attributes()[L"axis"].Value<Axis>());
-            else
-                axis = Axis(0);
 
             node->AddAttribute(attributesMap[L"axis"], (int64_t)ToIndex(axis));
         }

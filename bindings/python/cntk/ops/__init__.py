@@ -1689,7 +1689,7 @@ def asinh(x, name=''):
 @typemap
 def log_softmax(x, axis = None, name = ''):
     '''
-    Computes the logsoftmax normalized values of x.
+    Computes the logsoftmax normalized values of x. That is, y = x - log(reduce_sum(exp(x), axis)).
 
     Example:
         >>> C.log_softmax([[1, 2, 3],[3,0,-4]], 1).eval()
@@ -2493,8 +2493,8 @@ def gather(reference, indices):
 @typemap
 def flatten(x, axis = None, name = ''):
     '''
-    Flattens the input tensor into a 2D matrix. 
-    If input tensor has shape (d_0, d_1, ... d_n) then the output will have shape (d_0 X d_1 ... d_(axis-1), d_axis X d_(axis+1) ... X dn).
+    Flattens the input tensor into a 2D matrix.
+    If the input tensor has shape (d_0, d_1, ... d_n) then the output will have shape (d_0 X d_1 ... d_(axis-1), d_axis X d_(axis+1) ... X dn).
 
     Example:
         >>> # create 2x3x4 matrix, flatten the matrix at axis = 1
@@ -2507,8 +2507,8 @@ def flatten(x, axis = None, name = ''):
                  23.]], dtype=float32)
 
     Args:
-        x: input tensor
-        axis (int): (Default to 0) Indicate up to which input dimensions (exclusive) should be flattened to the outer dimension of the output
+        x: Input tensor.
+        axis (int): (Default to 0) Indicates up to which input dimensions (exclusive) should be flattened to the outer dimension of the output
         name (str, optional): the name of the Function instance in the network
 
     Returns:
