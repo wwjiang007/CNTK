@@ -7,7 +7,6 @@
 
 #include "halide_binary_convolve.h"
 #include "CNTKLibrary.h"
-//#include "convolve_wrapper.h"
 
 using namespace CNTK;
 
