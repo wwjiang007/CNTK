@@ -22,8 +22,8 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="BinaryConvolutionLib.cpp" />
+  <ItemGroup Condition="exists('$(HalideLibPath)')">
+    <ClCompile Include="BinaryConvolutionLib.cpp"/>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="BinaryConvolveOp.h" />
@@ -58,11 +58,11 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="$(DebugBuild)">
     <LinkIncremental>true</LinkIncremental>
-    <TargetName>Cntk.BinaryConvolutionExample-$(CntkComponentVersion)</TargetName>
+    <TargetName>Cntk.BinaryConvolution-$(CntkComponentVersion)</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="$(ReleaseBuild)">
     <LinkIncremental>false</LinkIncremental>
-    <TargetName>Cntk.BinaryConvolutionExample-$(CntkComponentVersion)</TargetName>
+    <TargetName>Cntk.BinaryConvolution-$(CntkComponentVersion)</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
