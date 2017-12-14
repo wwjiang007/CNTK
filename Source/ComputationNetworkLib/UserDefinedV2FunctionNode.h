@@ -69,14 +69,14 @@ public:
 
             auto argumentVar = arguments[j++];
 
-            FrameRange inputFr;
+            FrameRange inputFr = fr;
+            
             if (fr.IsAllFrames())
             {
-                inputFr = inputFr.WithLayout(input.GetMBLayout());
-            }
+                inputFr = fr.WithLayout(input.GetMBLayout());
+            }           
 
-            auto inputValueForFrame = input.ValueFor(inputFr);
-           
+            auto inputValueForFrame = input.ValueFor(inputFr);           
             auto argumentShape = ::CNTK::AsNDShape(input.GetSampleLayout());
             auto argumentValue = ::CNTK::Utils::GetValueObjectFromCNTKImplMatrixAndMBLayout(argumentShape, argumentVar.DynamicAxes(), inputValueForFrame, input.GetMBLayout());
             argumentValues.insert(std::make_pair(argumentVar, argumentValue));
@@ -114,10 +114,10 @@ public:
                     SetDims(this->m_outputsShape[i], HasMBLayout());
             }
 
-            if (i != 0)
-            {
-                this->m_outputsValue[i] = std::make_shared<Microsoft::MSR::CNTK::Matrix<ElemType>>(m_deviceId);
-            }
+            //if (i != 0)
+            //{
+            //    this->m_outputsValue[i] = std::make_shared<Microsoft::MSR::CNTK::Matrix<ElemType>>(m_deviceId);
+            //}
             this->m_outputsValue[i]->SetValue(*outputMatrixAndLayout.first);  
             
             if ((this->m_outputsMBLayout[i] != nullptr) && (outputMatrixAndLayout.second == nullptr))
@@ -160,10 +160,10 @@ public:
         for (size_t i = 0; i < outputs.size(); ++i)
         {
             auto output = outputs[i];
-            if (i != 0)
-            {
-                this->m_outputsGradient[i] = std::make_shared<Microsoft::MSR::CNTK::Matrix<ElemType>>(m_deviceId);
-            }           
+            //if (i != 0)
+            //{
+            //    this->m_outputsGradient[i] = std::make_shared<Microsoft::MSR::CNTK::Matrix<ElemType>>(m_deviceId);
+            //}           
 
             // TODO: We unpack the same output gradients each time this method is called for a different input.
             // We should be able to cache the unpacked values during backpropagation of gradients to the first
