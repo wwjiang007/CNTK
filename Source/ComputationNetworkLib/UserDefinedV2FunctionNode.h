@@ -53,7 +53,7 @@ public:
     {      
         // The first output value is set as this node's output. Others are mapped
         // using OutputMultiplexerNode when creating the computation network.
-        this->m_outputsValue[0] = m_value;
+        this->m_outputsValue[0] = m_value;        
 
         // Get the arguments of the external function
         auto arguments = m_externalFunction->Arguments();
@@ -68,7 +68,14 @@ public:
                 continue;
 
             auto argumentVar = arguments[j++];
-            auto inputValueForFrame = input.ValueFor(fr);
+
+            FrameRange inputFr;
+            if (fr.IsAllFrames())
+            {
+                inputFr = inputFr.WithLayout(input.GetMBLayout());
+            }
+
+            auto inputValueForFrame = input.ValueFor(inputFr);
            
             auto argumentShape = ::CNTK::AsNDShape(input.GetSampleLayout());
             auto argumentValue = ::CNTK::Utils::GetValueObjectFromCNTKImplMatrixAndMBLayout(argumentShape, argumentVar.DynamicAxes(), inputValueForFrame, input.GetMBLayout());
@@ -203,7 +210,15 @@ public:
 
             auto newInputGradientMatrixAndLayout = ::CNTK::Utils::GetCNTKImplMatrixAndMBLayoutFromValueObject<ElemType>(input, inputGradientValue);
             
-            InputRef(i).GradientFor(fr) += *newInputGradientMatrixAndLayout.first;
+            auto& inputNode = InputRef(i);
+            if (inputNode.HasMBLayout())
+            {
+                inputNode.GradientFor(fr) += *newInputGradientMatrixAndLayout.first;
+            }
+            else
+            {
+                inputNode.Gradient() += *newInputGradientMatrixAndLayout.first;
+            }            
 
             if (*InputRef(i).GetMBLayout() != *newInputGradientMatrixAndLayout.second)
                 LogicError("The MBLayout 'NumSequences=%zu, NumTimeSteps=%zu' of the Input(%zu) gradient computed by the external function '%S' does not match the expected MBLayout 'NumSequences=%zu, NumTimeSteps=%zu'.",
@@ -264,8 +279,8 @@ public:
             {
                 if (layoutNotInitialized)
                 {
-                    InferMBLayoutFromInputsForStandardCase(isFinalValidationPass);
-                    //m_pMBLayout = this->m_outputsMBLayout[i];
+                    //InferMBLayoutFromInputsForStandardCase(isFinalValidationPass);
+                    m_pMBLayout = this->m_outputsMBLayout[i];
                 }
 
                 SetDims(this->m_outputsShape[i], HasMBLayout());
