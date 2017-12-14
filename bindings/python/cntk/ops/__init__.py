@@ -82,6 +82,23 @@ def combine(*operands, **kw_name):
     return combine(operands_unfold, name)
 
 @typemap
+def sum(*operands, **kw_name):
+    name = (lambda name='': (name))(**kw_name) # Python 2.7 does not allow (*inputs, name='')
+
+    from cntk.cntk_py import sum
+    if len(operands) == 1 and isinstance(operands[0], (tuple, list)):
+        operands = operands[0]
+    if isinstance(operands, tuple):
+        operands = list(operands)
+    operands_unfold = []
+    for o in operands:
+        if hasattr(o, 'outputs') and len(o.outputs) > 1:
+            operands_unfold += o.outputs
+        else:
+            operands_unfold += [o]
+    return sum(operands_unfold, name)
+
+@typemap
 def as_block(composite, block_arguments_map, block_op_name, block_instance_name=''):
     '''
      Create a new block Function instance which just encapsulates the specified composite Function
@@ -1872,6 +1889,32 @@ def abs(x, name=''):
     x = sanitize_input(x)
     return abs(x, name)
 
+@typemap
+def element_and(x, y, name=''):
+    from cntk.cntk_py import element_and
+    x = sanitize_input(x)
+    y = sanitize_input(y)
+    return element_and(x, y, name)
+
+@typemap
+def element_not(x, name=''):
+    from cntk.cntk_py import element_not
+    x = sanitize_input(x)
+    return element_not(x, name)
+
+@typemap
+def element_or(x, y, name=''):
+    from cntk.cntk_py import element_or
+    x = sanitize_input(x)
+    y = sanitize_input(y)
+    return element_or(x, y, name)
+
+@typemap
+def element_xor(x, y, name=''):
+    from cntk.cntk_py import element_xor
+    x = sanitize_input(x)
+    y = sanitize_input(y)
+    return element_xor(x, y, name)
 
 @typemap
 def negate(x, name=''):
@@ -2062,6 +2105,11 @@ def reshape(x, shape, begin_axis=None, end_axis=None, name=''):
 
     return reshape(x, shape, internal_reshape_begin_axis, internal_reshape_end_axis, name)
 
+def squeeze(x, axes = None, name=''):
+    from cntk.cntk_py import squeeze
+    x = sanitize_input(x)
+    axes = sanitize_multi_axis_reduction_list(axes)
+    return squeeze(x, axes, name)
 
 @typemap
 def transpose(x, perm, name=''):
@@ -2686,6 +2734,27 @@ def reduce_prod(x, axis=None, name=''):
     x = sanitize_input(x)
     axis = sanitize_multi_axis_reduction_list(axis)
     return reduce_prod(x, axis, name)
+
+@typemap
+def reduce_l1(x, axis=None, name=''):
+    from cntk.cntk_py import reduce_l1
+    x = sanitize_input(x)
+    axis = sanitize_multi_axis_reduction_list(axis)
+    return reduce_l1(x, axis, name)
+
+@typemap
+def reduce_l2(x, axis=None, name=''):
+    from cntk.cntk_py import reduce_l2
+    x = sanitize_input(x)
+    axis = sanitize_multi_axis_reduction_list(axis)
+    return reduce_l2(x, axis, name)
+
+@typemap
+def reduce_sum_square(x, axis=None, name=''):
+    from cntk.cntk_py import reduce_sum_square
+    x = sanitize_input(x)
+    axis = sanitize_multi_axis_reduction_list(axis)
+    return reduce_sum_square(x, axis, name)
 
 @typemap
 def argmax(x, axis=None, name=''):
