@@ -924,18 +924,36 @@ namespace CNTK
         return GetValueObjectFromCNTKImplMatrixAndMBLayout(varShape, var.DynamicAxes(), matrix, layout, readOnly);
     }
 
-    NDShape GetSqueezedShape(const NDShape& inputShape, const Dictionary& squeezeConfig)
+    std::vector<Axis> GetSqueezableAxes(const NDShape& inputShape)
+    {
+        std::vector<Axis> axes;
+        auto replacementDims = inputShape.Dimensions();
+        int staticIdx = 0;
+        for (int i = 0; i < inputShape.Rank(); i++)
+        {
+            if (inputShape[i] == 1)
+            {
+                axes.push_back(Axis(staticIdx));
+            }
+
+            if (inputShape[i] != NDShape::FreeDimension || inputShape[i] != NDShape::InferredDimension)
+            {
+                staticIdx++;
+            }
+        }
+
+        return axes;
+    }
+
+    NDShape GetSqueezedShape(const NDShape& inputShape, const std::vector<Axis>* axes)
     {
         auto replacementDims = inputShape.Dimensions();
-
-        // collect all indices that need to be squeezed
-        if (squeezeConfig.Contains(PrimitiveFunction::AttributeNameAxisVec))
+        if (axes != nullptr && (*axes).size() != 0)
         {
             auto squeezedIdx = std::vector<size_t>({});
-            auto axes = AsVector<Axis>(squeezeConfig[PrimitiveFunction::AttributeNameAxisVec].Value<std::vector<DictionaryValue>>());
-            for (auto& ax : axes)
+            for (const Axis& ax : (*axes))
             {
-                auto axis = NormalizeStaticAxis(ax, inputShape);
+                auto axis = NormalizeStaticAxis(const_cast<Axis &>(ax), inputShape.Rank());
                 if (!axis.IsStaticAxis())
                     LogicError("Squeeze: can only squeeze static axes.");
                 auto idx = axis.StaticAxisIndex();
@@ -949,9 +967,23 @@ namespace CNTK
                 replacementDims.erase(std::begin(replacementDims) + i);
         }
         else
-            replacementDims.erase(std::remove_if(std::begin(replacementDims), std::end(replacementDims), [](const size_t dim) {return dim == 1; }), std::end(replacementDims));
-
+            replacementDims.erase(std::remove_if(std::begin(replacementDims), std::end(replacementDims), 
+                [](const size_t dim) {return dim == 1; }), std::end(replacementDims));
         return NDShape(replacementDims);
+    }
+
+    NDShape GetSqueezedShape(const NDShape& inputShape, const Dictionary& squeezeConfig)
+    {
+        auto replacementDims = inputShape.Dimensions();
+
+        // collect all indices that need to be squeezed
+        if (squeezeConfig.Contains(PrimitiveFunction::AttributeNameAxisVec))
+        {
+            auto axes = AsVector<Axis>(squeezeConfig[PrimitiveFunction::AttributeNameAxisVec].Value<std::vector<DictionaryValue>>());
+            return GetSqueezedShape(inputShape, &axes);
+        }
+        else
+            return GetSqueezedShape(inputShape);
     }
 
     NDMaskPtr CreateMask(const std::vector<size_t>& sequenceLengths, const std::vector<bool>& sequenceStartFlags, const DeviceDescriptor& device)

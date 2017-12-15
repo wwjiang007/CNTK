@@ -610,6 +610,10 @@ namespace CNTK
         return fullyDefinedVarShape;
     }
 
+    std::vector<Axis> GetSqueezableAxes(const NDShape& inputShape);
+
+    NDShape GetSqueezedShape(const NDShape& inputShape, const std::vector<Axis>* axes = nullptr);
+
     NDShape GetSqueezedShape(const NDShape& inputShape, const Dictionary& squeezeConfig);
 
     NDMaskPtr CreateMask(const std::vector<size_t>& sequenceLengths, const std::vector<bool>& sequenceStartFlags = {}, const DeviceDescriptor& device = DeviceDescriptor::CPUDevice());
