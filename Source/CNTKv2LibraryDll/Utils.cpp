@@ -945,30 +945,33 @@ namespace CNTK
         return axes;
     }
 
-    NDShape GetSqueezedShape(const NDShape& inputShape, const std::vector<Axis>* axes)
+    NDShape GetSqueezedShape(const NDShape& inputShape)
     {
         auto replacementDims = inputShape.Dimensions();
-        if (axes != nullptr && (*axes).size() != 0)
+        replacementDims.erase(std::remove_if(std::begin(replacementDims), std::end(replacementDims),
+            [](const size_t dim) {return dim == 1; }), std::end(replacementDims));
+        return NDShape(replacementDims);
+    }
+
+    NDShape GetSqueezedShape(const NDShape& inputShape, const std::vector<Axis>& axes)
+    {
+        auto replacementDims = inputShape.Dimensions();
+        auto squeezedIdx = std::vector<size_t>({});
+        for (const Axis& ax : axes)
         {
-            auto squeezedIdx = std::vector<size_t>({});
-            for (const Axis& ax : (*axes))
-            {
-                auto axis = NormalizeStaticAxis(const_cast<Axis &>(ax), inputShape.Rank());
-                if (!axis.IsStaticAxis())
-                    LogicError("Squeeze: can only squeeze static axes.");
-                auto idx = axis.StaticAxisIndex();
-                if (inputShape[idx] != 1)
-                    LogicError("Squeeze: cannot squeeze a static axis whose dimension (=%zd) is not 1.", inputShape[idx]);
-                squeezedIdx.push_back(idx);
-            }
-            // delete all squeezed indices from back to front
-            std::sort(std::begin(squeezedIdx), std::end(squeezedIdx), [](const size_t a, const size_t b) {return a > b; });
-            for (auto i : squeezedIdx)
-                replacementDims.erase(std::begin(replacementDims) + i);
+            auto axis = NormalizeStaticAxis(const_cast<Axis &>(ax), inputShape.Rank());
+            if (!axis.IsStaticAxis())
+                LogicError("Squeeze: can only squeeze static axes.");
+            auto idx = axis.StaticAxisIndex();
+            if (inputShape[idx] != 1)
+                LogicError("Squeeze: cannot squeeze a static axis whose dimension (=%zd) is not 1.", inputShape[idx]);
+            squeezedIdx.push_back(idx);
         }
-        else
-            replacementDims.erase(std::remove_if(std::begin(replacementDims), std::end(replacementDims), 
-                [](const size_t dim) {return dim == 1; }), std::end(replacementDims));
+        // delete all squeezed indices from back to front
+        std::sort(std::begin(squeezedIdx), std::end(squeezedIdx), [](const size_t a, const size_t b) {return a > b; });
+        for (auto i : squeezedIdx)
+            replacementDims.erase(std::begin(replacementDims) + i);
+
         return NDShape(replacementDims);
     }
 
@@ -980,7 +983,7 @@ namespace CNTK
         if (squeezeConfig.Contains(PrimitiveFunction::AttributeNameAxisVec))
         {
             auto axes = AsVector<Axis>(squeezeConfig[PrimitiveFunction::AttributeNameAxisVec].Value<std::vector<DictionaryValue>>());
-            return GetSqueezedShape(inputShape, &axes);
+            return GetSqueezedShape(inputShape, axes);
         }
         else
             return GetSqueezedShape(inputShape);

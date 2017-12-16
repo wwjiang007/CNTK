@@ -84,7 +84,7 @@ def combine(*operands, **kw_name):
 @typemap
 def mean(*operands, **kw_name):
     '''
-     Create a new Function instance that computes element-wise mean of input tensors
+     Create a new Function instance that computes element-wise mean of input tensors.
 
     Example:
         >>> in1 = C.input_variable((4,))
@@ -119,7 +119,7 @@ def mean(*operands, **kw_name):
 @typemap
 def sum(*operands, **kw_name):
     '''
-     Create a new Function instance that computes element-wise mean of input tensors
+     Create a new Function instance that computes element-wise sum of input tensors.
 
     Example:
         >>> in1_data = np.asarray([[1., 2., 3., 4.]], np.float32)
@@ -2008,7 +2008,7 @@ def abs(x, name=''):
 @typemap
 def element_and(x, y, name=''):
     '''
-    Computes the element-wise logic AND of ``x``:
+    Computes the element-wise logic AND of ``x``.
 
     Example:
         >>> C.element_and([1, 1, 0, 0], [1, 0, 1, 0]).eval()
@@ -2028,7 +2028,7 @@ def element_and(x, y, name=''):
 @typemap
 def element_not(x, name=''):
     '''
-    Computes the element-wise logic NOT of ``x`` and ``y``:
+    Computes the element-wise logic NOT of ``x`` and ``y``.
 
     Example:
         >>> C.element_not([1, 1, 0, 0]).eval()
@@ -2047,7 +2047,7 @@ def element_not(x, name=''):
 @typemap
 def element_or(x, y, name=''):
     '''
-    Computes the element-wise logic OR of ``x`` and ``y``:
+    Computes the element-wise logic OR of ``x`` and ``y``.
 
     Example:
         >>> C.element_or([1, 1, 0, 0], [1, 0, 1, 0]).eval()
@@ -2067,7 +2067,7 @@ def element_or(x, y, name=''):
 @typemap
 def element_xor(x, y, name=''):
     '''
-    Computes the element-wise logic XOR of ``x`` and ``y``:
+    Computes the element-wise logic XOR of ``x`` and ``y``.
 
     Example:
         >>> C.element_xor([1, 1, 0, 0], [1, 0, 1, 0]).eval()
@@ -3051,7 +3051,7 @@ def reduce_prod(x, axis=None, name=''):
     return reduce_prod(x, axis, name)
 
 @typemap
-def reduce_l1(x, axis=None, keepDims = True, name=''):
+def reduce_l1(x, axis=None, keepdims = True, name=''):
     '''
     Computes the L1 norm of the input tensor's element along the provided axes. 
     The resulted tensor has the same rank as the input if keepdims equal 1. 
@@ -3061,16 +3061,17 @@ def reduce_l1(x, axis=None, keepDims = True, name=''):
         >>> C.reduce_l1([[[1,2], [3,4]],[[5,6], [7,8]],[[9,10], [11,12]]], 2, False).eval()
         array([[[  3.],
                 [  7.]],
-        <BLANKLINE>
+
                [[ 11.],
                 [ 15.]],
-        <BLANKLINE>
+
                [[ 19.],
                 [ 23.]]], dtype=float32)
         >>> C.reduce_l1([[[1,2], [3,4]],[[5,6], [7,8]],[[9,10], [11,12]]], 2, True).eval()
         array([[  3.,   7.],
                [ 11.,  15.],
                [ 19.,  23.]], dtype=float32)
+
     Args:
         x: input tensor
         axis (int or :class:`~cntk.axis.Axis` or a :obj:`list` or :obj:`tuple` of int or :class:`~cntk.axis.Axis`): axis along which the reduction will be performed
@@ -3082,10 +3083,10 @@ def reduce_l1(x, axis=None, keepDims = True, name=''):
     from cntk.cntk_py import reduce_l1
     x = sanitize_input(x)
     axis = sanitize_multi_axis_reduction_list(axis)
-    return reduce_l1(x, axis, keepDims, name)
+    return reduce_l1(x, axis, keepdims, name)
 
 @typemap
-def reduce_l2(x, axis=None, keepDims = True, name=''):
+def reduce_l2(x, axis=None, keepdims = True, name=''):
     '''
     Computes the L2 norm of the input tensor's element along the provided axes. 
     The resulted tensor has the same rank as the input if keepdims equal 1. 
@@ -3107,10 +3108,10 @@ def reduce_l2(x, axis=None, keepDims = True, name=''):
     from cntk.cntk_py import reduce_l2
     x = sanitize_input(x)
     axis = sanitize_multi_axis_reduction_list(axis)
-    return reduce_l2(x, axis, keepDims, name)
+    return reduce_l2(x, axis, keepdims, name)
 
 @typemap
-def reduce_sum_square(x, axis=None, keepDims = True, name=''):
+def reduce_sum_square(x, axis=None, keepdims = True, name=''):
     '''
     Computes the sum square of the input tensor's element along the provided axes. 
     The resulted tensor has the same rank as the input if keepdims equal 1. 
@@ -3132,7 +3133,7 @@ def reduce_sum_square(x, axis=None, keepDims = True, name=''):
     from cntk.cntk_py import reduce_sum_square
     x = sanitize_input(x)
     axis = sanitize_multi_axis_reduction_list(axis)
-    return reduce_sum_square(x, axis, keepDims, name)
+    return reduce_sum_square(x, axis, keepdims, name)
 
 @typemap
 def argmax(x, axis=None, name=''):

@@ -2257,7 +2257,7 @@ namespace CNTK
                 expectedShape[idx] = 1;
             }
 
-            result = Reshape(result, GetSqueezedShape(expectedShape, &axes));
+            result = Reshape(result, GetSqueezedShape(expectedShape, axes));
         }
 
         return AsBlock(std::move(result), { { operandPlaceholder, operand } }, std::move(additionalProperties), opName, name);
@@ -2529,14 +2529,14 @@ namespace CNTK
         }
 
         std::vector<std::pair<Variable, Variable>> argumentsMap;
-        auto planceholder = PlaceholderVariable();
-        argumentsMap.push_back(std::pair<Variable, Variable>(planceholder, operands[0]));
-        FunctionPtr result = planceholder;
+        auto placeholder = PlaceholderVariable();
+        argumentsMap.push_back(std::pair<Variable, Variable>(placeholder, operands[0]));
+        FunctionPtr result = placeholder;
         for (int i = 1; i < count; i++)
         {
-            planceholder = PlaceholderVariable();
-            argumentsMap.push_back(std::pair<Variable, Variable>(planceholder, operands[i]));
-            result = Plus(result, planceholder);
+            placeholder = PlaceholderVariable();
+            argumentsMap.push_back(std::pair<Variable, Variable>(placeholder, operands[i]));
+            result = Plus(result, placeholder);
         }
 
         Constant divider = Constant::Scalar(operands[0].GetDataType(), static_cast<double>(operands.size()));
@@ -2550,18 +2550,18 @@ namespace CNTK
         int count = operands.size();
         if (count == 0)
         {
-            LogicError("Sum: none operand provided.");
+            LogicError("Sum: no operand provided.");
         }
 
         std::vector<std::pair<Variable, Variable>> argumentsMap;
-        auto planceholder = PlaceholderVariable();
-        argumentsMap.push_back(std::pair<Variable, Variable>(planceholder, operands[0]));
-        FunctionPtr result = planceholder;
+        auto placeholder = PlaceholderVariable();
+        argumentsMap.push_back(std::pair<Variable, Variable>(placeholder, operands[0]));
+        FunctionPtr result = placeholder;
         for (int i = 1; i < count; i++)
         {
-            planceholder = PlaceholderVariable();
-            argumentsMap.push_back(std::pair<Variable, Variable>(planceholder, operands[i]));
-            result = Plus(result, planceholder);
+            placeholder = PlaceholderVariable();
+            argumentsMap.push_back(std::pair<Variable, Variable>(placeholder, operands[i]));
+            result = Plus(result, placeholder);
         }
 
         return AsBlock(std::move(result), argumentsMap, L"Sum", name);

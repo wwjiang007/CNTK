@@ -612,7 +612,9 @@ namespace CNTK
 
     std::vector<Axis> GetSqueezableAxes(const NDShape& inputShape);
 
-    NDShape GetSqueezedShape(const NDShape& inputShape, const std::vector<Axis>* axes = nullptr);
+    NDShape GetSqueezedShape(const NDShape& inputShape, const std::vector<Axis>& axes);
+
+    NDShape GetSqueezedShape(const NDShape& inputShape);
 
     NDShape GetSqueezedShape(const NDShape& inputShape, const Dictionary& squeezeConfig);
 
