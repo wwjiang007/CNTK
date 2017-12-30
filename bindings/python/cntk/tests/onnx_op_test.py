@@ -640,12 +640,12 @@ def test_Softsign(tmpdir):
     model = C.softsign([[-1, -0.5, 0, 1, 2]])
     verify_no_input(model, tmpdir, 'Softsign_0')
 
-#Softsign
-def test_Squeeze(tmpdir):
-    x0 = np.arange(12).reshape((2, 2, 1, 3)).astype('f')
-    x = C.input_variable((2, 1, 3))
-    model = C.squeeze(x)
-    verify_one_input(model, x0, tmpdir, 'Squeeze_0')
+#Squeeze
+#def test_Squeeze(tmpdir):
+#    x0 = np.arange(12).reshape((2, 2, 1, 3)).astype('f')
+#    x = C.input_variable((2, 1, 3))
+#    model = C.squeeze(x)
+#    verify_one_input(model, x0, tmpdir, 'Squeeze_0')
 
 #Sum
 def test_Sum(tmpdir):

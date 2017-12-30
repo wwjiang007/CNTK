@@ -1649,9 +1649,13 @@ namespace CNTK
 
     FunctionPtr Squeeze(const Variable& operand, const std::wstring& name)
     {
-        auto additionalProperties = Dictionary();
-        additionalProperties[PrimitiveFunction::AttributeNameAxisVec] = AsDictionaryValueVector(GetSqueezableAxes(operand.Shape()));
-        return UnaryOp(PrimitiveOpType::Squeeze, operand, std::move(additionalProperties), name);
+        return UnaryOp(PrimitiveOpType::Squeeze, operand, {}, name);
+
+        // TODO: this code is needed for ONNX converter because ONNX requires squeeze axis. However, unit test failed with this code.
+        // Need further investigation.
+        //auto additionalProperties = Dictionary();
+        //additionalProperties[PrimitiveFunction::AttributeNameAxisVec] = AsDictionaryValueVector(GetSqueezableAxes(operand.Shape()));
+        //return UnaryOp(PrimitiveOpType::Squeeze, operand, std::move(additionalProperties), name);
     }
 
     FunctionPtr Squeeze(const Variable& operand, const std::vector<Axis>& axes, const std::wstring& name)

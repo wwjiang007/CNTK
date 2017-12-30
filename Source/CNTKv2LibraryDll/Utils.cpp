@@ -977,8 +977,6 @@ namespace CNTK
 
     NDShape GetSqueezedShape(const NDShape& inputShape, const Dictionary& squeezeConfig)
     {
-        auto replacementDims = inputShape.Dimensions();
-
         // collect all indices that need to be squeezed
         if (squeezeConfig.Contains(PrimitiveFunction::AttributeNameAxisVec))
         {
