@@ -3059,15 +3059,6 @@ def reduce_l1(x, axis=None, keepdims = True, name=''):
 
     Example:
         >>> C.reduce_l1([[[1,2], [3,4]],[[5,6], [7,8]],[[9,10], [11,12]]], 2, False).eval()
-        array([[[  3.],
-                [  7.]],
-
-               [[ 11.],
-                [ 15.]],
-
-               [[ 19.],
-                [ 23.]]], dtype=float32)
-        >>> C.reduce_l1([[[1,2], [3,4]],[[5,6], [7,8]],[[9,10], [11,12]]], 2, True).eval()
         array([[  3.,   7.],
                [ 11.,  15.],
                [ 19.,  23.]], dtype=float32)
@@ -3094,7 +3085,7 @@ def reduce_l2(x, axis=None, keepdims = True, name=''):
 
     Example:
         >>> C.reduce_l2([[[1,2], [3,4]]], 2).eval()
-        array([[[ 2.236067],
+        array([[[ 2.236068],
                 [ 5.        ]]], dtype=float32)
 
     Args:
