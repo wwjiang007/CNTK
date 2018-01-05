@@ -366,6 +366,7 @@ function show_default ()
     fi
 }
 
+
 function show_help ()
 {
     echo "Usage: configure [options]"
