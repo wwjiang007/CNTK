@@ -73,11 +73,11 @@ public:
             auto inputValueForFrame = input.ValueFor(inputFr);            
             auto argumentShape = ::CNTK::AsNDShape(input.GetSampleLayout());
 
-            //MBLayoutPtr layout = make_shared<MBLayout>();
-            //Layout->InitAsFrameMode(1);
+            MBLayoutPtr layout = make_shared<MBLayout>();
+            layout->InitAsFrameMode(1);
            
             // Problem is that the input and also frame's MBLayout is the full layout, so we provide the entire value to the function.
-            auto argumentValue = ::CNTK::Utils::GetValueObjectFromCNTKImplMatrixAndMBLayout(argumentShape, argumentVar.DynamicAxes(), inputValueForFrame, input.GetMBLayout());
+            auto argumentValue = ::CNTK::Utils::GetValueObjectFromCNTKImplMatrixAndMBLayout(argumentShape, argumentVar.DynamicAxes(), inputValueForFrame, layout);
             argumentValues.insert(std::make_pair(argumentVar, argumentValue));
         }
         assert(j == arguments.size());
@@ -113,6 +113,9 @@ public:
                     SetDims(this->m_outputsShape[i], HasMBLayout());
             }
 
+
+            get the valuefor for the frame and set it to the m_outputsValue. It won't copy but a view is given, so we can put it here.
+
             this->m_outputsValue[i]->SetValue(*outputMatrixAndLayout.first);  
             
             if ((this->m_outputsMBLayout[i] != nullptr) && (outputMatrixAndLayout.second == nullptr))
@@ -124,6 +127,7 @@ public:
             else
             {
                 if (this->m_outputsHasNewMBLayout[i])
+                    //
                     this->m_outputsMBLayout[i]->CopyFrom(outputMatrixAndLayout.second);
                 else
                 {
@@ -235,6 +239,9 @@ public:
         {
             InferMBLayoutFromInputsForStandardCase(isFinalValidationPass);
         }
+
+        auto arguments = m_externalFunction->Arguments();
+        match the arguments' dynamic axes find the output with the same dynamic axes and use its mblayout as the mblayout of the node.'
 
         for (size_t i = 0; i < outputs.size(); ++i)
         {
