@@ -782,9 +782,15 @@ def test_udf_in_recurrent_loop_simple():
     #C.logging.graph.plot(udf_recurrent, "recurrent.pdf")
     value = udf_recurrent.eval({x:x0})
     assert np.array_equal(value, x0)
-    import pdb
-    pdb.set_trace()
+
     gradient, result= udf_recurrent.grad({x: x0}, wrt=[x], outputs=[udf_recurrent.output])
-    print("Gradient", gradient)
-    assert np.array_equal(gradient, [[[4.,4.],[4.,4.],[4.,4.]],[[3.,3.],[3.,3.],[3.,3.]],[[2.,2.],[2.,2.],[2.,2.]], [[1.,1.],[1.,1.],[1.,1.]]])
+
+    g1 = np.full((3,2),4, dtype=np.float32)
+    g2 = np.full((3,2),3, dtype=np.float32)
+    g3 = np.full((3,2),2, dtype=np.float32)
+    g4 = np.full((3,2),1, dtype=np.float32)
+    grad = [g1,g2,g3,g4]
+    grad = np.reshape(grad, (1,4,3,2))
+
+    assert np.array_equal(gradient, grad)
     assert np.array_equal(result, x0)
