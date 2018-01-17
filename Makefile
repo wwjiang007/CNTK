@@ -580,7 +580,7 @@ $(BINARY_CONVOLUTION_LIB): $(BINARY_CONVOLUTION_LIBRARY_OBJ) | $(CNTKLIBRARY_LIB
 	@echo $(SEPARATOR)
 	@echo creating $@ for $(ARCH) with build type $(BUILDTYPE)
 	@mkdir -p $(dir $@)
-	$(CXX) $(LDFLAGS) -shared $(patsubst %,-L%, $(LIBDIR)) $(patsubst %,$(RPATH)%, $(LIBDIR) $(ORIGINDIR)) -o $@ $^ -l$(CNTKLIBRARY) $(HALIDE_PATH)/lib/libHalide.so
+	$(CXX) $(LDFLAGS) -shared $(patsubst %,-L%, $(LIBDIR)) $(patsubst %,$(RPATH)%, $(LIBDIR) $(ORIGINDIR)) -o $@ $^ -l$(CNTKLIBRARY) $(HALIDE_PATH)/bin/libHalide.so
 #endif
 
 ##############################################
