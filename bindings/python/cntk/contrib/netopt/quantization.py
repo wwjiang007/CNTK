@@ -10,7 +10,7 @@ try:
                 'Cntk.BinaryConvolution-' + C.__version__.rstrip('+'), 
                 'CreateBinaryConvolveFunction')
 except:
-    print("Could not find %s dll. Please build %s and try again" % ('Cntk.BinaryConvolution-' + C.__version__.rstrip('+'), "Extnsibiliy\BinaryConvolution"))
+    print("Could not find %s library. Please build %s and try again" % ('Cntk.BinaryConvolution-' + C.__version__.rstrip('+'), "Extnsibiliy\BinaryConvolution"))
     os._exit(1)
 
 def binarize_convolution(model, train_function, filter_function = None):
