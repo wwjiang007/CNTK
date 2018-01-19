@@ -564,7 +564,7 @@ $(CPP_EXTENSIBILITY_EXAMPLES_LIB): $(CPP_EXTENSIBILITY_EXAMPLES_LIBRARY_OBJ) | $
 ##############################################
 # Binary convolution library
 ##############################################
-#ifdef $(HALIDE_PATH)
+ifdef $(HALIDE_PATH)
 INCLUDEPATH += $(HALIDE_PATH)/include
 BINARY_CONVOLUTION_LIBRARY_SRC =\
 	$(SOURCEDIR)/Extensibility/BinaryConvolutionLib/BinaryConvolutionLib.cpp \
@@ -581,7 +581,7 @@ $(BINARY_CONVOLUTION_LIB): $(BINARY_CONVOLUTION_LIBRARY_OBJ) | $(CNTKLIBRARY_LIB
 	@echo creating $@ for $(ARCH) with build type $(BUILDTYPE)
 	@mkdir -p $(dir $@)
 	$(CXX) $(LDFLAGS) -shared $(patsubst %,-L%, $(LIBDIR)) $(patsubst %,$(RPATH)%, $(LIBDIR) $(ORIGINDIR)) -o $@ $^ -l$(CNTKLIBRARY) $(HALIDE_PATH)/bin/libHalide.so
-#endif
+endif
 
 ##############################################
 # Native implementation of the Proposal Layer
