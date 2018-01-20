@@ -1800,7 +1800,10 @@ namespace CNTK
 
     FunctionPtr ElementDivide(const Variable& leftOperand, const Variable& rightOperand, const std::wstring& name)
     {
-        return ElementTimes(leftOperand, Reciprocal(rightOperand), name);
+        auto leftOperandPlaceholder = PlaceholderVariable();
+        auto rightOperandPlaceholder = PlaceholderVariable();
+        auto result = ElementTimes(leftOperandPlaceholder, Reciprocal(rightOperandPlaceholder), name);
+        return AsBlock(std::move(result), { { leftOperandPlaceholder, leftOperand },{ rightOperandPlaceholder, rightOperand } }, L"ElementDivide", name);
     }
 
     FunctionPtr ElementMax(const Variable& leftOperand, const Variable& rightOperand, const std::wstring& name)
@@ -2180,6 +2183,11 @@ namespace CNTK
         auto additionalProperties = Dictionary();
         additionalProperties[PrimitiveFunction::AttributeNameAxis] = axis;
 
+        //Axis normalizedAxis = axis;
+        //normalizedAxis = NormalizeAxis(normalizedAxis, reference);
+
+        //additionalProperties[PrimitiveFunction::AttributeNameAxis] = normalizedAxis;
+
         if (!axis.IsStaticAxis())
             LogicError("Gather operation only supports a single static axis.");
 
@@ -2193,7 +2201,9 @@ namespace CNTK
             auto swapped = TransposeAxes(refPlaceholder, lastAxis, axis);
             auto gatherSwapped = GatherOp(indPlaceholder, swapped);
             auto result = TransposeAxes(gatherSwapped, lastAxis, axis);
-            return AsBlock(std::move(result), { { refPlaceholder, reference }, { indPlaceholder, indices } }, std::move(additionalProperties), L"GatherOp", name);
+            return AsBlock(std::move(result), { { refPlaceholder, reference },{ indPlaceholder, indices } }, std::move(additionalProperties), L"GatherOp", name);
+
+            return AsBlock(std::move(result), { { indPlaceholder, indices }, { refPlaceholder, reference }}, std::move(additionalProperties), L"Gather", name);
         }
     }
 
