@@ -93,7 +93,7 @@ def create_binary_convolution_model():
 # python 'binary_convolve' Function instances used during training, faster C++ NativeBinaryConvolveFunction
 # instances that uses optimized binary convolution implementations generated using the Halide framework
 def clone_with_native_binary_convolutions(model):
-    ops.register_native_user_function('NativeBinaryConvolveFunction', 'Cntk.BinaryConvolutionExample-' + C.__version__.rstrip('+'), 'CreateBinaryConvolveFunction')
+    ops.register_native_user_function('NativeBinaryConvolveFunction', 'Cntk.BinaryConvolution-' + C.__version__.rstrip('+'), 'CreateBinaryConvolveFunction')
     filter = lambda x : type(x) == C.Function and x.root_function.op_name == 'binary_convolve'
 
     def converter(x):

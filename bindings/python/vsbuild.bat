@@ -84,9 +84,9 @@ for %%D in (
   )
 )
 
-@REM Cntk.BinaryConvolutionExample-%CNTK_COMPONENT_VERSION%.dll is optional
-if exist Cntk.BinaryConvolutionExample-%CNTK_COMPONENT_VERSION%.dll (
- set CNTK_LIBRARIES=!CNTK_LIBRARIES!;%CNTK_LIB_PATH%\Cntk.BinaryConvolutionExample-%CNTK_COMPONENT_VERSION%.dll
+@REM Cntk.BinaryConvolution-%CNTK_COMPONENT_VERSION%.dll is optional
+if exist Cntk.BinaryConvolution-%CNTK_COMPONENT_VERSION%.dll (
+ set CNTK_LIBRARIES=!CNTK_LIBRARIES!;%CNTK_LIB_PATH%\Cntk.BinaryConvolution-%CNTK_COMPONENT_VERSION%.dll
 )
 
 @REM Cntk.Deserializers.Image-%CNTK_COMPONENT_VERSION%.dll (plus dependencies) is optional
