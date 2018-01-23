@@ -751,14 +751,14 @@ class SimpleRecurrentNode(UserFunction):
     def forward(self, arguments, device=None, as_numpy=True):
         return None, arguments[1]
 
-    def backward(self, state, root_gradients, input_gradients):        
+    def backward(self, state, root_gradients, input_gradients):
         for input in input_gradients:
             input_gradients[input] = root_gradients
 
     def infer_outputs(self):
         self.count = self.count + 1
         outputVar = [C.output_variable(self.inputs[1].shape, self.inputs[1].dtype,
-            self.inputs[1].dynamic_axes, name='outDummyLayer')]   
+            self.inputs[1].dynamic_axes, name='outDummyLayer')]
         return outputVar
 
     def serialize(self):

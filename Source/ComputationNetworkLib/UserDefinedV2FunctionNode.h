@@ -172,7 +172,7 @@ public:
             {
                 if (this->m_outputsHasNewMBLayout[i])
                 {
-                    // In SEQMode the layout has to be fixed after validation.
+                    // Update the layout only in PARMode (!SEQMode).
                     this->m_outputsMBLayout[i]->CopyFrom(outputMatrixAndLayout.second);
                 }
                 else
