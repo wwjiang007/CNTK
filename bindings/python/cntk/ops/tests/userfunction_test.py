@@ -742,3 +742,55 @@ def test_udf_in_recurrent_loop():
 
     with pytest.raises(RuntimeError):
         m.eval([np.arange(10, dtype=np.float32)])
+
+class SimpleRecurrentNode(UserFunction):
+    def __init__(self, x, y, name='NewLayer'):
+        super(SimpleRecurrentNode, self).__init__([x, y], name=name)
+        self.count = 0
+
+    def forward(self, arguments, device=None, as_numpy=True):
+        return None, arguments[1]
+
+    def backward(self, state, root_gradients, input_gradients):
+        for input in input_gradients:
+            input_gradients[input] = root_gradients
+
+    def infer_outputs(self):
+        self.count = self.count + 1
+        outputVar = [C.output_variable(self.inputs[1].shape, self.inputs[1].dtype,
+            self.inputs[1].dynamic_axes, name='outDummyLayer')]
+        return outputVar
+
+    def serialize(self):
+        return None
+
+    @staticmethod
+    def deserialize(inputs, name, state):
+        return SimpleRecurrentNode(inputs, name=name)
+
+def test_udf_in_recurrent_loop_simple():
+    x = C.sequence.input_variable(needs_gradient=True,shape=(3,2))
+    x0 = np.reshape(np.arange(24.0,dtype=np.float32),(1,4,3,2))
+
+    name = "NewLayer"
+
+    @C.BlockFunction(name, name)
+    def udf(x, y):
+        return C.user_function(SimpleRecurrentNode(x, y))
+
+    udf_recurrent = C.layers.Recurrence(udf)(x)
+    #C.logging.graph.plot(udf_recurrent, "recurrent.pdf")
+    value = udf_recurrent.eval({x:x0})
+    assert np.array_equal(value, x0)
+
+    gradient, result= udf_recurrent.grad({x: x0}, wrt=[x], outputs=[udf_recurrent.output])
+
+    g1 = np.full((3,2),4, dtype=np.float32)
+    g2 = np.full((3,2),3, dtype=np.float32)
+    g3 = np.full((3,2),2, dtype=np.float32)
+    g4 = np.full((3,2),1, dtype=np.float32)
+    grad = [g1,g2,g3,g4]
+    grad = np.reshape(grad, (1,4,3,2))
+
+    assert np.array_equal(gradient, grad)
+    assert np.array_equal(result, x0)
