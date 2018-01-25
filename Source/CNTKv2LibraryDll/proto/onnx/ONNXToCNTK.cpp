@@ -120,6 +120,14 @@ namespace CNTK
 
         static Variable GetNodeOperandWithPaddingResolved(std::vector<bool>& cntkConvAutoPadding,
             NDShape& strides, const Node *node, const std::vector<Variable>& inputs, const double padValue = 0.0);
+
+        //
+        // CNTK convolution/pooling operations do not support ONNX same_low padding.
+        // This method does padding accoordingly before invoking 
+        // Convolution/Pooling operations.
+        //
+        static FunctionPtr CreatePadOpForSameLowAutoPad(
+            const Variable &input, NDShape kernelShape, NDShape strides, const double padValue);
         static FunctionPtr CreateCNTKConvNode(const Node *node, const std::vector<Variable> &inputs, bool transpose = false);
         static FunctionPtr CreateCNTKFCNode(const std::wstring& nodeName, const std::vector<Variable>& inputs);
 
@@ -321,13 +329,18 @@ std::vector<size_t>  ONNXToCNTKHelper::GetNodeDims(const Node *node)
 Constant ONNXToCNTKHelper::CreateConstant(const Node *node, const DeviceDescriptor& computeDevice)
 {
     NodeAttributes::const_iterator itValue = node->GetAttributes().find("value");
-
     const onnx::TensorProto valueProto = itValue->second.t();
 
+    return CreateConstant(valueProto, node->Name(), computeDevice);
+}
+
+Constant ONNXToCNTKHelper::CreateConstant(const onnx::TensorProto &valueProto, const std::string &nodeName,
+    const DeviceDescriptor& computeDevice)
+{
     auto dataType = valueProto.data_type();
 
-    NDShape shape(GetNodeDims(node));
-    
+    NDShape shape(std::vector<size_t>(valueProto.dims().begin(), valueProto.dims().end()));
+
     // the following code is to revert CNTKToONNXHelper::ToTensorShape.to restore a CNTK NDArray
     NDShape reversedShape = ReverseShape(shape);
 
@@ -375,7 +388,7 @@ Constant ONNXToCNTKHelper::CreateConstant(const Node *node, const DeviceDescript
 
         if (computeDevice.Type() == DeviceKind::CPU)
         {
-            Constant constantVariable(dstFinal, ToWString(node->Name()));
+            Constant constantVariable(dstFinal, ToWString(nodeName));
             return constantVariable;
         }
         else
@@ -384,7 +397,7 @@ Constant ONNXToCNTKHelper::CreateConstant(const Node *node, const DeviceDescript
             // Create a GPU NDArrayView and CopyFrom a CPU NDArrayView that holding the data.
             NDArrayViewPtr dstFinalGPU(new NDArrayView(DataType::Float, StorageFormat::Dense, reversedShape, computeDevice));
             dstFinalGPU->CopyFrom(*dstFinal);
-            Constant constantVariable(dstFinalGPU, ToWString(node->Name()));
+            Constant constantVariable(dstFinalGPU, ToWString(nodeName));
             return constantVariable;
         }
     }
@@ -430,7 +443,7 @@ Constant ONNXToCNTKHelper::CreateConstant(const Node *node, const DeviceDescript
 
         if (computeDevice.Type() == DeviceKind::CPU)
         {
-            Constant constantVariable(dstFinal, ToWString(node->Name()));
+            Constant constantVariable(dstFinal, ToWString(nodeName));
             return constantVariable;
         }
         else
@@ -439,7 +452,7 @@ Constant ONNXToCNTKHelper::CreateConstant(const Node *node, const DeviceDescript
             // Create a GPU NDArrayView and CopyFrom a CPU NDArrayView that holding the data.
             NDArrayViewPtr dstFinalGPU(new NDArrayView(DataType::Double, StorageFormat::Dense, reversedShape, computeDevice));
             dstFinalGPU->CopyFrom(*dstFinal);
-            Constant constantVariable(dstFinalGPU, ToWString(node->Name()));
+            Constant constantVariable(dstFinalGPU, ToWString(nodeName));
             return constantVariable;
         }
     }
@@ -533,8 +546,7 @@ Variable ONNXToCNTKHelper::CreateLeafVariableOrConstant(const NodeArg *nodeArg,
     onnx::TensorProto valueProto;
     if (graph->GetInitialTensor(nodeName, valueProto))
     {
-        const Node *childNode = GetChildNode(parentNode, nodeArg);
-        return CreateConstant(childNode, computeDevice);
+        return CreateConstant(valueProto, nodeName, computeDevice);
     }
 
     auto dataType = FromONNXType(nodeArg->ToProto().type());
@@ -899,7 +911,10 @@ std::pair<Variable, Variable> ONNXToCNTKHelper::BroadcastElementWiseInput(
     {
         if (shape0.Rank() < shape1.Rank())
         {
-            LogicError("in case of element wise binary ops, rank of lhs shall not be less than the rand of the rhs");
+            // TODO: this may happen if the ONNX op is built with input swapping (which is necessary
+            // because ONNX only allows broadcast of right-hand-operand).
+            // LogicError("in case of element wise binary ops, rank of lhs shall not be less than the rand of the rhs");
+            return{ input1 , input0 };
         }
         else if (shape0.Rank() > shape1.Rank())
         {
@@ -1364,7 +1379,8 @@ FunctionPtr ONNXToCNTKHelper::CreateFunction(const Node *node, const std::vector
     }
     else if (onnxOpName == "LeakyRelu")
     {
-        FunctionPtr cntkFunction = LeakyReLU(inputs[0], ToWString(node->Name()));
+        float alpha = static_cast<float>(GetNamedAttributeAsFloat(node, "alpha", 0.01F));
+        FunctionPtr cntkFunction = LeakyReLU(inputs[0], alpha, ToWString(node->Name()));
         return cntkFunction;
     }
     else if (onnxOpName == "Selu")
@@ -1701,6 +1717,22 @@ FunctionPtr ONNXToCNTKHelper::CreateFunction(const Node *node, const std::vector
         std::vector<Axis> axes = GetNamedAttributeAsAxes(node, "axes"); 
         return Squeeze(inputs[0], axes, ToWString(node->Name()));
     }
+    else if (onnxOpName == "ImageScaler")
+    {
+        double scale = GetNamedAttributeAsFloat(node, "scale", 1);
+        std::vector<float> bias = GetNamedAttributeAsFloatVec(node, "bias");
+        const NDShape& inputShape = inputs[0].Shape();
+        if (inputShape.Rank() == 4 && inputShape[3] == 1)
+        {
+            // CNTK does not have batch axis in shape dimensions.
+            Variable inputReshaped = Reshape(inputs[0], inputShape.SubShape(0, 3));
+            return ImageScaler(inputReshaped, scale, bias, ToWString(node->Name()));
+        }
+        else
+        {
+            return ImageScaler(inputs[0], scale, bias, ToWString(node->Name()));
+        }
+    }
     else
     {
         LogicError("ONNX (%s) is not supported in CNTK", onnxOpName.c_str());
@@ -1790,7 +1822,11 @@ Variable ONNXToCNTKHelper::GetNodeOperandWithPaddingResolved(std::vector<bool>& 
         switch (auto_pad)
         {
         case ConvAutoPadType::SAME_LOWER:
-            NOT_IMPLEMENTED; // TODO: SAME_LOWER needs to be implemented.
+            {
+                cntkConvAutoPadding.insert(cntkConvAutoPadding.begin(), strides.Rank(), false);
+                NDShape kernelShape = GetNamedAttributeAsShape(node, "kernel_shape", false);
+                convOperand = (Variable)CreatePadOpForSameLowAutoPad(inputs[0], kernelShape, strides, padValue);
+            }
             break;
         case ConvAutoPadType::SAME_UPPER:
             cntkConvAutoPadding.insert(cntkConvAutoPadding.begin(), strides.Rank(), true);
@@ -1833,6 +1869,54 @@ Variable ONNXToCNTKHelper::GetNodeOperandWithPaddingResolved(std::vector<bool>& 
     return convOperand;
 }
 
+FunctionPtr ONNXToCNTKHelper::CreatePadOpForSameLowAutoPad(
+    const Variable &input, NDShape kernelShape, NDShape strides, const double padValue)
+{
+    NDShape inputShape = input.Shape();
+    std::vector<int> pads;
+    for (int dim = 0; dim < kernelShape.Rank(); dim++)
+    {
+        // Padding could be calcualted as: p = s - (w - f) % s.
+        // however, it does not ensure input size being multiplier of output size.
+        // The above calculation failed with the yolo model. ONNX spec is not clear on this.
+        // This following padding computation ensures: input_size = output_size * stride.
+        int f = kernelShape[dim];
+        int s = strides[dim]; 
+        pads.push_back(f - s);
+    }
+
+    if (std::all_of(pads.begin(), pads.end(), [](int pad) {return (pad == 0); }))
+        return input;
+
+    if (pads.size() < inputShape.Rank())
+    {
+        for (int dim = pads.size(); dim < inputShape.Rank(); dim++)
+            pads.push_back(0);
+    }
+
+    std::vector<size_t> begins, ends;
+    for (int dim = 0; dim < pads.size(); dim++)
+    {
+        // SameLow: the lower (begin) side get one extra pad if total pads is odd.
+        int p = pads[dim];
+        int endPad = p / 2;
+        ends.push_back(endPad);
+        int beginPad = p - endPad;
+        begins.push_back(beginPad);
+    }
+
+    CNTK::PaddingMode cntkPaddingMode = CNTK::PaddingMode::CONSTANTPAD;
+
+    // TODO: Pad op is not intuitative or it could be a bug. One would think begins before end.
+    FunctionPtr cntkPadFunction = Pad(input,
+        cntkPaddingMode,
+        ends,
+        begins,
+        padValue);
+
+    return cntkPadFunction;
+}
+
 FunctionPtr ONNXToCNTKHelper::CreateCNTKConvNode(const Node *node, const std::vector<Variable>& inputs, bool transpose /*= false*/)
 {
     NDShape outputShape;
@@ -1866,7 +1950,7 @@ FunctionPtr ONNXToCNTKHelper::CreateCNTKConvNode(const Node *node, const std::ve
             ToWString(node->Name()));
     }
 
-    return Convolution(
+    FunctionPtr cntkConvFunction = Convolution(
         convolutionMap,
         convOperand,
         strides,
@@ -1877,6 +1961,15 @@ FunctionPtr ONNXToCNTKHelper::CreateCNTKConvNode(const Node *node, const std::ve
         groups,
         maxTempMemSizeInSamples,
         ToWString(node->Name()));
+
+    // TODO: support bias in CNTK op.
+    if (inputs.size() == 3)
+    {
+        NDShape shape({ 1, 1, inputs[2].Shape()[0] });
+        return Plus(cntkConvFunction, Reshape(inputs[2], shape));
+    }
+    else
+        return cntkConvFunction;
 }
 
 FunctionPtr ONNXToCNTKHelper::CreateCNTKFCNode(const std::wstring& nodeName, const std::vector<Variable>& inputs)

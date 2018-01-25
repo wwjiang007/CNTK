@@ -354,12 +354,12 @@ onnx::TypeProto CNTKToONNXHelper::ToTypeProto(const std::vector<Axis>& axes)
 }
 
 // this method is to undo an idempotent convertion in sanitize_permutation:
-//# Find the permutation such that when it is applied to the reverse
-//# of an input gives the reverse of perm applied to the input
-//# Example:
-//# input is[a, b, c, d], perm is[3, 0, 2, 1], perm of input is[d, a, c, b]
-//# we are looking for[2, 1, 3, 0] because when we apply it to[d, c, b, a]
-//# the result is[b, c, a, d] which is the revese of[d, a, c, b]
+// Find the permutation such that when it is applied to the reverse
+// of an input gives the reverse of perm applied to the input
+// Example:
+// input is[a, b, c, d], perm is[3, 0, 2, 1], perm of input is[d, a, c, b]
+// we are looking for[2, 1, 3, 0] because when we apply it to[d, c, b, a]
+// the result is[b, c, a, d] which is the revese of[d, a, c, b]
 std::vector<int64_t> CNTKToONNXHelper::ConvertPermutationCNTKToONNX(const std::vector<Axis> &axes, bool hasBatchAxis)
 {
     std::vector<int64_t> permutation(axes.size());
@@ -602,7 +602,7 @@ std::tuple<std::pair<std::vector<int>, std::vector<int>>, bool, int, bool> CNTKT
     if (dims1.size() > dims2.size())
     {
         // This is a case like [a, b, c] + [b, 1]. Make it [a, b, c] + [1, b, 1].
-        dims2.insert(dims2.begin(), shape1.Rank() - shape2.Rank(), 1);
+        dims2.insert(dims2.begin(), dims1.size() - dims2.size(), 1);
     }
 
     // Append batch dimension if needed.
@@ -784,9 +784,9 @@ ONNXIR::Node* CNTKToONNXHelper::CreateNode(const FunctionPtr& src,
                 // requires operands to have the same rank
                 inputArgType = ToTypeProto(input.Shape(), OpInputsHasBatchAxis(src));
             }
-            else if (opName == "Hardmax")
+            else if (opName == "Hardmax" || opName == "ImageScaler")
             {
-                // ONNX specifies that hardmax always need a batch axis
+                // ONNX specifies that hardmax, ImageScaler always need a batch axis
                 inputArgType = ToTypeProto(input.Shape(), true);
             }
             else
@@ -942,9 +942,9 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
         }
         else if ((src->OpName() == L"LeakyReLU") || (src->OpName() == L"ELU"))
         {
-            auto alpha = 1.0f;
+            auto alpha = 0.01f;
             if (src->Attributes().Contains(L"alpha"))
-                alpha = (float)src->Attributes()[L"alpha"].Value<double>();
+                alpha = (float)src->Attributes()[L"alpha"].Value<float>();
             node->AddAttribute("alpha", alpha);
         }
         else if (src->OpName() == L"SELU")
@@ -1052,7 +1052,8 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
                     newShapeVec.push_back(static_cast<int>(axisSize));
             }
             // Always add a 1 to the shape for batch axis in ONNX tensors.
-            newShapeVec.push_back(1);
+            if ((src->Inputs().size() > 0) && (src->Inputs()[0].HasBatchAxis()))
+                newShapeVec.push_back(1);
             node->AddAttribute(attributesMap[L"shape"], ToINTS(newShapeVec));
         }
         else if (src->OpName() == L"Splice")
@@ -1106,19 +1107,19 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
 
             head.insert(head.end(), foot.begin(), foot.end());
             string modeStr;
-            if (mode == 0)
-                modeStr = "constant";
-            else if (mode == 1)
-                modeStr = "reflect";
-            else if (mode == 2)
-                NOT_IMPLEMENTED
-            else 
-                LogicError("Invalid 'mode' value encountered in CNTK Pad node.");
+if (mode == 0)
+modeStr = "constant";
+else if (mode == 1)
+modeStr = "reflect";
+else if (mode == 2)
+NOT_IMPLEMENTED
+else
+LogicError("Invalid 'mode' value encountered in CNTK Pad node.");
 
-            node->AddAttribute("mode", modeStr);
-            node->AddAttribute("pads", head);
-            if (mode == 0)
-                node->AddAttribute("value", value);
+node->AddAttribute("mode", modeStr);
+node->AddAttribute("pads", head);
+if (mode == 0)
+node->AddAttribute("value", value);
         }
         else if (src->OpName() == L"DepthToSpace" || src->OpName() == L"SpaceToDepth")
         {
@@ -1204,6 +1205,14 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
                 int64_t ax = ConvertAxisToOnnx(axis, src->Inputs()[0]);
                 node->AddAttribute(attributesMap[L"axis"], ax);
             }
+        }
+        else if (src->OpName() == L"ImageScaler")
+        {
+            float scale = (float)(src->Attributes()[L"Scaler"].Value<float>());
+            std::vector<float> biases = AsVector<float>(src->Attributes()[L"Biases"].Value<std::vector<DictionaryValue>>());
+
+            node->AddAttribute("scale", scale);
+            node->AddAttribute("bias", biases);
         }
     }
     else

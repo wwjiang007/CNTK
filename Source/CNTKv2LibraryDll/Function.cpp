@@ -2183,11 +2183,6 @@ namespace CNTK
         auto additionalProperties = Dictionary();
         additionalProperties[PrimitiveFunction::AttributeNameAxis] = axis;
 
-        //Axis normalizedAxis = axis;
-        //normalizedAxis = NormalizeAxis(normalizedAxis, reference);
-
-        //additionalProperties[PrimitiveFunction::AttributeNameAxis] = normalizedAxis;
-
         if (!axis.IsStaticAxis())
             LogicError("Gather operation only supports a single static axis.");
 
@@ -2202,8 +2197,6 @@ namespace CNTK
             auto gatherSwapped = GatherOp(indPlaceholder, swapped);
             auto result = TransposeAxes(gatherSwapped, lastAxis, axis);
             return AsBlock(std::move(result), { { refPlaceholder, reference },{ indPlaceholder, indices } }, std::move(additionalProperties), L"GatherOp", name);
-
-            return AsBlock(std::move(result), { { indPlaceholder, indices }, { refPlaceholder, reference }}, std::move(additionalProperties), L"Gather", name);
         }
     }
 
@@ -2317,6 +2310,40 @@ namespace CNTK
         auto func = [](const Variable& placeholder, const std::vector<Axis>& axes) 
         { return ReduceSum(ElementTimes(placeholder, placeholder), axes); };
         return ReduceFunctionAsBlock(operand, axes, keepDims, func, L"ReduceSumSquare", name);
+    }
+
+    FunctionPtr ImageScaler(const Variable& operand, float scaler, std::vector<float> biases, const std::wstring& name)
+    {
+        if (operand.Shape().Rank() != 3)
+            LogicError("ImageScaler: incorrect operand shape: %S", operand.Shape().AsString());
+        
+        size_t channels = operand.Shape()[2];
+        if (channels != biases.size())
+            LogicError("ImageScaler: number of biase (%d) does not equal channels of the image (%d)", biases.size(), channels);
+
+        auto additionalProperties = Dictionary();
+        additionalProperties[L"Scaler"] = scaler;
+        additionalProperties[L"Biases"] = AsDictionaryValueVector(biases);
+
+        auto operandPlaceholder = PlaceholderVariable();
+
+        Constant constantScalar = Constant::Scalar(operand.GetDataType(), scaler);
+        FunctionPtr scaledImage = ElementTimes(operandPlaceholder, constantScalar);
+        
+        std::vector<Variable> biasConstants;
+        for (int i = 0; i < channels; i++)
+        {
+            Constant constantBias = Constant::Scalar(operand.GetDataType(), biases[i]);
+            biasConstants.push_back(constantBias);
+        }
+
+        FunctionPtr constantBiases = Splice(biasConstants, Axis(0));
+        NDShape shape({ 1, 1, channels });
+        FunctionPtr constantBiasesReshaped = Reshape(constantBiases, shape);
+
+        FunctionPtr result = Plus(scaledImage, constantBiasesReshaped, name);
+
+        return AsBlock(std::move(result), { { operandPlaceholder, operand } }, std::move(additionalProperties), L"ImageScaler", name);
     }
 
     FunctionPtr PerDimMeanVarianceNormalize(const Variable& operand, const Variable& mean, const Variable& invStdDev, const std::wstring& name)
@@ -2657,15 +2684,15 @@ namespace CNTK
         return AsBlock(std::move(result), { { operandPlaceholder, operand } }, std::move(additionalProperties), L"SELU", name);
     }
 
-    FunctionPtr LeakyReLU(const Variable& operand, const std::wstring& name)
+    FunctionPtr LeakyReLU(const Variable& operand, float alpha, const std::wstring& name)
     {
         auto additionalProperties = Dictionary();
-        additionalProperties[PrimitiveFunction::AttributeNameAlpha] = 0.01;
+        additionalProperties[PrimitiveFunction::AttributeNameAlpha] = alpha;
 
         auto operandPlaceholder = PlaceholderVariable();
         auto lessThanZero = Less(operandPlaceholder, Constant::Scalar(operand.GetDataType(), 0.0));
         auto result = ElementSelect(lessThanZero,
-            ElementTimes(Constant::Scalar(operand.GetDataType(), 0.01), operandPlaceholder),
+            ElementTimes(Constant::Scalar(operand.GetDataType(), alpha), operandPlaceholder),
             operandPlaceholder);
 
         return AsBlock(std::move(result), { { operandPlaceholder, operand } }, std::move(additionalProperties), L"LeakyReLU", name);

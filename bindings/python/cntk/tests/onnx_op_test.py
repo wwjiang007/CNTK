@@ -428,6 +428,22 @@ def test_HardSigmiod(tmpdir):
     data = np.random.rand(*shape).astype(np.float32)
     verify_one_input(model, data, tmpdir, 'HardSigmoid_1')
 
+#ImageScaler
+def test_ImageScaler(tmpdir):
+    input_height = 32
+    input_width = 32
+    channels = 3
+    image = np.ones([channels, input_height, input_width]).astype(np.float32)
+    scalar = 1.5
+    bias = [10, 20, 30]
+
+    model = C.image_scaler(image, scalar, bias);
+    verify_no_input(model, tmpdir, 'ImageScaler_0')
+
+    x = C.input_variable(np.shape(image)) 
+    model = C.image_scaler(x, scalar, bias);
+    verify_one_input(model, image, tmpdir, 'ImageScaler_1')
+
 #LeakyRelu
 def test_LeakyRelu(tmpdir):
     data = np.asarray([[-1, -0.5, 0, 1, 2]], dtype=np.float32)

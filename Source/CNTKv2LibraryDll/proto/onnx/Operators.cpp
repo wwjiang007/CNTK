@@ -356,6 +356,9 @@ namespace ONNX
             { L"Squeeze", "Squeeze" },
             { L"axes", "axes" },
         } } },
+        { L"ImageScaler",{ {
+            { L"ImageScaler", "ImageScaler" },
+            } } },
     };
 
     // given a cntkOpName and cntk attribute OpName which is saved in CNTK::Function's attribute,
@@ -429,6 +432,7 @@ namespace ONNX
             { L"Not",{ 0, 1 } },
             { L"Softplus",{ 0 } },
             { L"Softsign",{ 0 } },
+            { L"ImageScaler",{ 0, 1, 2, 3 } },
         };
 
         std::unordered_map<std::wstring, std::vector<int>> Operators::_cntkToONNXInputIndices = {
