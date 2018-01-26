@@ -389,7 +389,7 @@ public:
                     DataTypeName(::CNTK::AsDataType<ElemType>()));
             }
 
-            m_outputsMBLayout[i] = m_pMBLayout;
+            this->m_outputsMBLayout[i] = m_pMBLayout;
             if (layoutNotInitialized)
             {
                 this->m_outputsHasNewMBLayout[i] = true;
