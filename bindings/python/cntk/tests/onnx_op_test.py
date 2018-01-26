@@ -572,11 +572,11 @@ def test_Pad(tmpdir):
     verify_one_input(model, data, tmpdir, 'Pad_1')    
 
 #PRelu
-def test_PRelu(tmpdir):
-    data = np.asarray([[-1, -0.5, 0, 1, 2]])
-    alpha = C.constant(value=[[0.5, 0.5, 0.5, 0.5, 0.5]])
-    model = C.param_relu(alpha, data)
-    verify_no_input(model, tmpdir, 'PRelu_0')
+#def test_PRelu(tmpdir):
+#    data = np.asarray([[-1, -0.5, 0, 1, 2]])
+#    alpha = C.constant(value=[[0.5, 0.5, 0.5, 0.5, 0.5]])
+#    model = C.param_relu(alpha, data)
+#    verify_no_input(model, tmpdir, 'PRelu_0')
 
 #Pow
 def test_Pow(tmpdir):

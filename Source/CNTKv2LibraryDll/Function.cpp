@@ -2339,7 +2339,7 @@ namespace CNTK
         
         size_t channels = operand.Shape()[2];
         if (channels != biases.size())
-            LogicError("ImageScaler: number of biase (%d) does not equal channels of the image (%d)", biases.size(), channels);
+            LogicError("ImageScaler: number of biase (%d) does not equal channels of the image (%d)", (int)biases.size(), (int)(channels);
 
         auto additionalProperties = Dictionary();
         additionalProperties[L"Scaler"] = scaler;
