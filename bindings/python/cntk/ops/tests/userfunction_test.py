@@ -768,7 +768,8 @@ class SimpleRecurrentNode(UserFunction):
     def deserialize(inputs, name, state):
         return SimpleRecurrentNode(inputs, name=name)
 
-def test_udf_in_recurrent_loop_simple():
+
+def test_recurrance_with_udf_with_layers():
     x = C.sequence.input_variable(needs_gradient=True,shape=(3,2))
     x0 = np.reshape(np.arange(24.0,dtype=np.float32),(1,4,3,2))
 
@@ -794,3 +795,53 @@ def test_udf_in_recurrent_loop_simple():
 
     assert np.array_equal(gradient, grad)
     assert np.array_equal(result, x0)
+
+
+class SimpleUdf(UserFunction):
+    def __init__(self, x, name='SimpleUdf'):
+        super(SimpleUdf, self).__init__([x], name=name)
+
+    def forward(self, arguments, device=None, as_numpy=True):
+        return None, arguments
+
+    def backward(self, state, root_gradients, variables=None, as_numpy=True):
+        return root_gradients
+
+    def infer_outputs(self):
+        outputVar = [C.output_variable(self.inputs[idx].shape, self.inputs[idx].dtype,
+            self.inputs[idx].dynamic_axes, name='outSimpleUdf') for idx in range(len(self.inputs))]
+        return outputVar
+
+    def serialize(self):
+        return None
+
+    @staticmethod
+    def deserialize(inputs, name, state):
+        return DummyLayer(inputs, name=name)
+
+
+def test_recurrance_with_udf_without_layers():
+    name = "SimpleUdf"
+    def udf(a):
+        return C.user_function(SimpleUdf(a, name=name))
+    
+    # input varibale and the data.
+    x = C.sequence.input_variable(needs_gradient=True,shape=(2,))
+    x0 = np.reshape(np.arange(8.0,dtype=np.float32),(1,4,2))
+
+    # creates a recurrent loop.
+    p = C.placeholder(shape=(2,))
+    past= C.sequence.past_value(p)
+    z = udf(x) * past  + C.Parameter((2,), init=[1,1])
+    z.replace_placeholders({p:z.outputs[0]})
+    
+    out = z.eval({x:x0})
+    expected_out = [np.array([1,1,3,4,13,21,79,148], dtype=np.float32).reshape(4,2)]
+    assert np.array_equal(out, expected_out)
+
+    gradient, result= z.grad({x: x0}, wrt=[x], outputs=[z.output])
+    assert np.array_equal(result, expected_out)
+
+    expected_grad = [np.array([0,0,29,41,21,32,13,21], dtype=np.float32).reshape(4,2)]
+    assert np.array_equal(gradient, expected_grad)
+    

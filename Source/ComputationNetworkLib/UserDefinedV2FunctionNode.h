@@ -21,8 +21,6 @@ class OutputMultiplexerNode;
 // of which can be part of a CNTK computation network.
 // The actual implementation of the operation itself is external to the CNTK engine.
 // -----------------------------------------------------------------------
-
-// TODO: We currently only support external nodes that cannot be part of CNTK recurrent loops
 template <class ElemType>
 class UserDefinedV2FunctionNode final : public ComputationNode<ElemType>, public MultiOutputNode<ElemType>
 {
@@ -247,20 +245,19 @@ public:
             outputGradientValues.insert({ output, gradientValue });
         }
 
-        std::vector<::CNTK::Variable> externalFunctionUniqueInputs;
-        auto externalFunctionInputs = m_externalFunction->Inputs();
-        for (auto input : externalFunctionInputs)
-        {
-            if (std::find(externalFunctionUniqueInputs.begin(), externalFunctionUniqueInputs.end(), input) == externalFunctionUniqueInputs.end())
-                externalFunctionUniqueInputs.push_back(input);
-        }
-
+        std::unordered_map<::CNTK::Variable, size_t> externalFunctionUniqueInputs;
         std::unordered_map<::CNTK::Variable, ::CNTK::ValuePtr> inputGradientValues;
-        for (size_t i = 0; i < externalFunctionUniqueInputs.size(); ++i)
+        auto externalFunctionInputs = m_externalFunction->Inputs();
+        for (int i = 0; i < externalFunctionInputs.size(); ++i)
         {
-            //This is a BUGBUG i is not the same once we put into unique
-            if (InputRef(i).NeedsGradient())
-                inputGradientValues.insert({ externalFunctionUniqueInputs[i], nullptr });
+            if (externalFunctionUniqueInputs.find(externalFunctionInputs[i]) == externalFunctionUniqueInputs.end())
+            {                
+                externalFunctionUniqueInputs.insert({ externalFunctionInputs[i], i });
+                if (InputRef(i).NeedsGradient())
+                {
+                    inputGradientValues.insert({ externalFunctionInputs[i], nullptr });
+                }
+            }
         }
 
         m_externalFunction->Backward(m_currentBackpropStatePtr, outputGradientValues, inputGradientValues);
@@ -268,14 +265,17 @@ public:
         // Accumulate the computed input gradient value into the existing input gradient value
         // TODO: We should directly pass the actual input gradient tensor to the Backward method 
         // instead of allocating a new value and accumulating it ourselves
-        for (size_t i = 0; i < externalFunctionUniqueInputs.size(); ++i)
+        //for (size_t i = 0; i < externalFunctionUniqueInputs.size(); ++i)
+        for (auto it = externalFunctionUniqueInputs.begin(); it != externalFunctionUniqueInputs.end(); ++it)
         {
-            if (!InputRef(i).NeedsGradient())
+            auto& inputNode = InputRef(it->second);
+
+            if (!inputNode.NeedsGradient())
                 continue;
 
-            InputRef(i).LazyZeroGradient(this); // set gradient to 0 if this is the first time
+            inputNode.LazyZeroGradient(this); // set gradient to 0 if this is the first time
 
-            auto input = externalFunctionUniqueInputs[i];
+            auto input = it->first;
             auto inputGradientValue = inputGradientValues[input];
             if (!inputGradientValue)
                 continue;
@@ -287,7 +287,6 @@ public:
                     inputGradientValue);
 
             // Set the gradient based on the current frame.
-            auto& inputNode = InputRef(i);
             if (inputNode.HasMBLayout() && inSEQMode)
             {
                 inputNode.GradientFor(fr) += *newInputGradientMatrixAndLayout.first;
@@ -296,11 +295,15 @@ public:
             {
                 inputNode.Gradient() += *newInputGradientMatrixAndLayout.first;
 
-                if (*InputRef(i).GetMBLayout() != *newInputGradientMatrixAndLayout.second)
-                    LogicError("The MBLayout 'NumSequences=%zu, NumTimeSteps=%zu' of the Input(%zu) gradient computed by the external function '%S' does not match the expected MBLayout 'NumSequences=%zu, NumTimeSteps=%zu'.",
-                        newInputGradientMatrixAndLayout.second->GetNumSequences(), newInputGradientMatrixAndLayout.second->GetNumTimeSteps(),
-                        i, this->GetName().c_str(),
-                        InputRef(i).GetMBLayout()->GetNumSequences(), InputRef(i).GetMBLayout()->GetNumTimeSteps());
+                if (*inputNode.GetMBLayout() != *newInputGradientMatrixAndLayout.second)
+                    LogicError("The MBLayout 'NumSequences=%zu, NumTimeSteps=%zu' of the Input(%zu)"
+                        " gradient computed by the external function '%S' does not match the"
+                        " expected MBLayout 'NumSequences=%zu, NumTimeSteps=%zu'.",
+                        newInputGradientMatrixAndLayout.second->GetNumSequences(), 
+                        newInputGradientMatrixAndLayout.second->GetNumTimeSteps(),
+                        it->second, this->GetName().c_str(),
+                        inputNode.GetMBLayout()->GetNumSequences(), 
+                        inputNode.GetMBLayout()->GetNumTimeSteps());
             }
         }
 
@@ -361,7 +364,7 @@ public:
 
                     if (matchCount == outputDynamicAxes.size())
                     {
-                        assert(m_inputs.size() >= j); // one to one mapping between inputs and arguments?
+                        assert(m_inputs.size() >= j); // one to one mapping between inputs and arguments.
                         LinkToMBLayout(InputRef(j).GetMBLayout());
                         matchingDynamicAxesFound = true;
                         break;
