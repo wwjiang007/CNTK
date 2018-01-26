@@ -832,9 +832,9 @@ def test_recurrance_with_udf_without_layers():
     # creates a recurrent loop.
     p = C.placeholder(shape=(2,))
     past= C.sequence.past_value(p)
-    z = udf(x) * past  + C.Parameter((2,), init=[1,1])
+    z = udf(x) * udf(past)  + C.Parameter((2,), init=[1,1])
     z.replace_placeholders({p:z.outputs[0]})
-    
+    C.logging.graph.plot(z, "recurrent.pdf")
     out = z.eval({x:x0})
     expected_out = [np.array([1,1,3,4,13,21,79,148], dtype=np.float32).reshape(4,2)]
     assert np.array_equal(out, expected_out)
