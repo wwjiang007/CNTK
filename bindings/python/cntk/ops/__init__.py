@@ -3136,13 +3136,13 @@ def reduce_sum_square(x, axis=None, keepdims = True, name=''):
     return reduce_sum_square(x, axis, keepdims, name)
 
 @typemap
-def image_scaler(x, scalar, biases, name=''):
+def image_scaler(x, scale, biases, name=''):
     '''
     Alteration of image by scaling its individual values.
 
     Args:
         x (`numpy.array` or :class:`~cntk.ops.functions.Function`): any :class:`~cntk.ops.functions.Function` that outputs a tensor.
-        scalar (float): Scalar channel factor.
+        scale (float): Scale factor.
         bias (numpy array): Bias values for each channel.
 
     Returns:
@@ -3151,7 +3151,7 @@ def image_scaler(x, scalar, biases, name=''):
     '''
     from cntk.cntk_py import image_scaler
     x = sanitize_input(x)
-    return image_scaler(x, scalar, biases, name)
+    return image_scaler(x, scale, biases, name)
 
 @typemap
 def argmax(x, axis=None, name=''):

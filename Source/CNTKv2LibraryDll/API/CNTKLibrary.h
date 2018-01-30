@@ -4400,7 +4400,7 @@ namespace CNTK
     ///
     /// Create an instance of the CNTK built-in image scaler operation on specified image tensor input operand.
     ///
-    CNTK_API FunctionPtr ImageScaler(const Variable& operand, float scaler, std::vector<float> biases, const std::wstring& name);
+    CNTK_API FunctionPtr ImageScaler(const Variable& operand, float scale, std::vector<float> biases, const std::wstring& name);
 
     ///
     /// Per dimension mean-variance normalization of the specified input operand.

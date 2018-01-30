@@ -2312,7 +2312,7 @@ namespace CNTK
         return ReduceFunctionAsBlock(operand, axes, keepDims, func, L"ReduceSumSquare", name);
     }
 
-    FunctionPtr ImageScaler(const Variable& operand, float scaler, std::vector<float> biases, const std::wstring& name)
+    FunctionPtr ImageScaler(const Variable& operand, float scale, std::vector<float> biases, const std::wstring& name)
     {
         if (operand.Shape().Rank() != 3)
             LogicError("ImageScaler: incorrect operand shape: %S", operand.Shape().AsString());
@@ -2322,12 +2322,12 @@ namespace CNTK
             LogicError("ImageScaler: number of biase (%d) does not equal channels of the image (%d)", biases.size(), channels);
 
         auto additionalProperties = Dictionary();
-        additionalProperties[L"Scaler"] = scaler;
+        additionalProperties[L"Scaler"] = scale;
         additionalProperties[L"Biases"] = AsDictionaryValueVector(biases);
 
         auto operandPlaceholder = PlaceholderVariable();
 
-        Constant constantScalar = Constant::Scalar(operand.GetDataType(), scaler);
+        Constant constantScalar = Constant::Scalar(operand.GetDataType(), scale);
         FunctionPtr scaledImage = ElementTimes(operandPlaceholder, constantScalar);
         
         std::vector<Variable> biasConstants;
