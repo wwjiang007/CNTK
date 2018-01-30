@@ -18,6 +18,27 @@ using namespace CNTK::ONNX;
 using namespace CNTK;
 
 //
+// A helper function, to reverse any iterable container and return a copy
+// of the reversed container.
+//
+template<typename ItrType>
+ItrType reverse(ItrType v)
+{
+    std::reverse(std::begin(v), std::end(v));
+    return v;
+}
+
+template<class T, class V>
+inline std::vector<V> Cast(const std::vector<T>& v)
+{
+    std::vector<V> result;
+    result.reserve(v.size());
+    for (auto d : v)
+        result.push_back((V)d);
+    return result;
+}
+
+//
 // Helper function to reduce the rank of a shape.
 //
 onnx::TypeProto ReduceRank(const onnx::TensorShapeProto* inputShape, int reductionRank, bool rightReduction)
@@ -176,27 +197,6 @@ namespace CNTK
         // Adds attributes 'auto_pad' or 'pads' to saved node (typically convolution or pooling).
         //
         static void PutAutopadOrPadAttrInNode(ONNXIR::Node* node, const std::vector<bool>& autoPadding, const NDShape& kernelShape);
-
-        //
-        // A helper function, to reverse any iterable container and return a copy
-        // of the reversed container.
-        //
-        template<typename ItrType>
-        static ItrType reverse(ItrType v)
-        {
-            std::reverse(std::begin(v), std::end(v));
-            return v;
-        }
-
-        template<class T, class V>
-        static std::vector<V> Cast(const std::vector<T>& v)
-        {
-            std::vector<V> result;
-            result.reserve(v.size());
-            for (auto d : v)
-                result.push_back((V)d);
-            return result;
-        }
     };
 }
 
@@ -276,7 +276,7 @@ void CNTKToONNXHelper::CopyTensor(const NDArrayViewPtr src, onnx::TensorProto& d
     }
     else
     {
-        auto dimensions = CNTKToONNXHelper::reverse(srcShape.Dimensions());
+        auto dimensions = reverse(srcShape.Dimensions());
         for (auto dim : dimensions)
             *(dst.mutable_dims()->Add()) = dim;
     }
@@ -574,8 +574,8 @@ std::tuple<std::pair<std::vector<int>, std::vector<int>>, bool, int, bool> CNTKT
 
     // CNTK and ONNX dimensions are reversed.
     // Reverse the dimension so that broadcast and axis calculation is in ONNX sense.
-    std::vector<int> dims1(reverse(CNTKToONNXHelper::Cast<size_t, int>(shape1.Dimensions())));
-    std::vector<int> dims2(reverse(CNTKToONNXHelper::Cast<size_t, int>(shape2.Dimensions())));
+    std::vector<int> dims1(reverse(Cast<size_t, int>(shape1.Dimensions())));
+    std::vector<int> dims2(reverse(Cast<size_t, int>(shape2.Dimensions())));
 
     if ((shape1.TotalSize() > 1 && shape2.TotalSize() == 1) || (shape1.TotalSize() == 1 && shape2.TotalSize() > 1))
     {
@@ -1253,18 +1253,7 @@ node->AddAttribute("value", value);
             auto strides = (NDShape)src->Attributes()[L"strides"].Value<NDShape>();
             if (strides.Rank() < kernelShape.Rank())
             {
-                // TODO: Try removing this branch. May not be needed after batch dimension fix.
                 strides = strides.AppendShape(NDShape(std::vector<size_t>(kernelShape.Rank() - strides.Rank(), 1)));
-            }
-            if ((strides.Rank() - kernelShape.Rank()) == 1)
-            {
-                // This can happen, for example, because a CNTK node includes strides for the channel axis as well. 
-                strides = strides.SubShape(0, strides.Rank() - 1);
-            }
-            else if ((strides.Rank() - kernelShape.Rank()) > 1)
-            {
-                // This means that the length of kernel shape and strides is off by two or more which should not happen.
-                LogicError("Node '%S': kernel shape and strides dimensionality does not match.", src->AsString().c_str());
             }
             auto autoPadding = AsVector<bool>(src->Attributes()[L"autoPadding"].Value<std::vector<DictionaryValue>>());
 
