@@ -953,7 +953,7 @@ std::pair<Variable, Variable> ONNXToCNTKHelper::BroadcastElementWiseInput(
                 newInput1 = Reshape(input1, newShape);
             }
 
-            return{ needPostRemoveInput0BatchDim ? Reshape(input0, shape0.SubShape(0, shape0.Rank() - 1)) : input0, newInput1 };
+            return{ needPostRemoveInput0BatchDim ? (Variable)(Reshape(input0, shape0.SubShape(0, shape0.Rank() - 1))) : input0, newInput1 };
         }
         else
         {
