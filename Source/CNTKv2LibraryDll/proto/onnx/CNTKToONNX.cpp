@@ -17,25 +17,14 @@
 using namespace CNTK::ONNX;
 using namespace CNTK;
 
-//
-// A helper function, to reverse any iterable container and return a copy
-// of the reversed container.
-//
-template<typename ItrType>
-ItrType reverse(ItrType v)
+onnx::TypeProto TensorShapeProtoToTypeProto(const onnx::TensorShapeProto* inputShape)
 {
-    std::reverse(std::begin(v), std::end(v));
-    return v;
-}
+    onnx::TypeProto newShape;
+    int inputRank = inputShape->dim_size();
+    for (int index = 0; index < inputRank; index++)
+        newShape.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(inputShape->dim(index).dim_value());
 
-template<class T, class V>
-inline std::vector<V> Cast(const std::vector<T>& v)
-{
-    std::vector<V> result;
-    result.reserve(v.size());
-    for (auto d : v)
-        result.push_back((V)d);
-    return result;
+    return newShape;
 }
 
 //
@@ -165,7 +154,7 @@ namespace CNTK
         // Converts axes (in CNTK C++ API sense) to index in ONNX sense
         //
         static std::vector<int64_t> ConvertAxesToOnnx(const std::vector<Axis> &axes, const Variable &operand);
-        
+
         //
         // Given input tersors of a CNTK elementwise operation, figure out
         // input shapes for ONNX operation.
@@ -175,9 +164,9 @@ namespace CNTK
         static std::tuple<std::pair<std::vector<int>, std::vector<int>>, bool, int, bool> AdjustForBroadcastShape(
             const Variable &input1, const Variable &input2);
 
-        static std::tuple<std::vector<int>, bool, int, bool > CalcualteBroadcastAxis(
+        static std::tuple<std::vector<int>, bool, int, bool > CalculateBroadcastAxis(
             const std::vector<int> &dims1, const std::vector<int> &dims2);
-    
+
         //
         // Argument orders between CNTK and ONNX aren't always the same.
         //
@@ -191,12 +180,37 @@ namespace CNTK
         //
         // Get ONNX 'pads' attribute value based on CNTK node's autoPadding attribute value.
         //
-        static std::pair<std::vector<int>, std::vector<int> > GetONNXPadsAttributeFromCNTKNode(const std::vector<bool>& cntkAutoPadding, const NDShape& kernelShape);
+        static std::pair<std::vector<int>, std::vector<int> > GetONNXPadsAttributeFromCNTKNode(
+            const NDShape &inputShape,
+            const std::vector<bool>& cntkAutoPadding, const NDShape& kernelShape, bool ceilOutDim);
 
         //
         // Adds attributes 'auto_pad' or 'pads' to saved node (typically convolution or pooling).
         //
-        static void PutAutopadOrPadAttrInNode(ONNXIR::Node* node, const std::vector<bool>& autoPadding, const NDShape& kernelShape);
+        static void PutAutopadOrPadAttrInNode(ONNXIR::Node* node, const NDShape &inputShape,
+            const std::vector<bool>& autoPadding,
+            const NDShape& kernelShape, bool ceilOutDim = false);
+
+        //
+        // A helper function, to reverse any iterable container and return a copy
+        // of the reversed container.
+        //
+        template<typename ItrType>
+        static ItrType reverse(ItrType v)
+        {
+            std::reverse(std::begin(v), std::end(v));
+            return v;
+        }
+
+        template<class T, class V>
+        static inline std::vector<V> Cast(const std::vector<T>& v)
+        {
+            std::vector<V> result;
+            result.reserve(v.size());
+            for (auto d : v)
+                result.push_back((V)d);
+            return result;
+        }
     };
 }
 
@@ -276,7 +290,7 @@ void CNTKToONNXHelper::CopyTensor(const NDArrayViewPtr src, onnx::TensorProto& d
     }
     else
     {
-        auto dimensions = reverse(srcShape.Dimensions());
+        auto dimensions = CNTKToONNXHelper::reverse(srcShape.Dimensions());
         for (auto dim : dimensions)
             *(dst.mutable_dims()->Add()) = dim;
     }
@@ -501,11 +515,11 @@ bool CNTKToONNXHelper::FilterInput(const FunctionPtr& src, const CNTK::Variable&
 }
 
 /*
-    CNTK python static axis is zero based. Free/Inferred axis is not static.
-    ONNX batch axis, if exists, is 0. in this case static axes start from 1.
-    CNTK cpp get static axis in a dis-normalized form python (e.g. -axis - 1)
-    In general CNTK node attribute contains axis in this dis-normalized form.
-    This function converts dis-normalized form to ONNX form.
+CNTK python static axis is zero based. Free/Inferred axis is not static.
+ONNX batch axis, if exists, is 0. in this case static axes start from 1.
+CNTK cpp get static axis in a dis-normalized form (e.g. -axis - 1)
+In general CNTK node attribute contains axis in this dis-normalized form.
+This function converts dis-normalized form to ONNX form.
 */
 int64_t CNTKToONNXHelper::ConvertAxisToOnnx(const Axis &axis, const Variable &operand)
 {
@@ -615,7 +629,7 @@ std::tuple<std::pair<std::vector<int>, std::vector<int>>, bool, int, bool> CNTKT
 
     std::vector<int> broadcastShape;
     bool swapInputDueToDims;
-    std::tie<std::vector<int>, bool, int>(dims2, broadcast, axis, swapInputDueToDims) = CalcualteBroadcastAxis(dims1, dims2);
+    std::tie<std::vector<int>, bool, int>(dims2, broadcast, axis, swapInputDueToDims) = CalculateBroadcastAxis(dims1, dims2);
 
     if (broadcast && swapInput && swapInputDueToDims)
     {
@@ -630,7 +644,7 @@ For example with:
 case1: [a, b, c] + [ b, 1] - broadcast
 broadcast shape = [b], broadcast = true, axis = 1
 */
-std::tuple<std::vector<int>, bool, int, bool> CNTKToONNXHelper::CalcualteBroadcastAxis(
+std::tuple<std::vector<int>, bool, int, bool> CNTKToONNXHelper::CalculateBroadcastAxis(
     const std::vector<int> &dims1, const std::vector<int> &dims2)
 {
     bool swapInput = false;
@@ -642,7 +656,7 @@ std::tuple<std::vector<int>, bool, int, bool> CNTKToONNXHelper::CalcualteBroadca
     {
         if (dims1[i] != dims2[i])
         {
-            if (dims1[i] == 1) 
+            if (dims1[i] == 1)
                 swapInput = true;
 
             broadCast = true;
@@ -764,7 +778,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateNode(const FunctionPtr& src,
                 std::pair<std::vector<int>, std::vector<int>> adjustedDims;
                 bool broadcast = false, swapInput = false;
                 int axis = 0;
-                int index0, index1; 
+                int index0, index1;
                 std::tie<int, int>(index0, index1) = Operators::GetElementWiseInputIndices(src->OpName());
 
                 if (index0 != inputIndex && index1 != inputIndex)
@@ -777,7 +791,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateNode(const FunctionPtr& src,
                 else if (inputIndex == index1)
                     inputArgType = ToTypeProto(adjustedDims.second, false);
             }
-            else if(opName == "Splice")
+            else if (opName == "Splice")
             {
                 // for ops like Concat, batch axis may exist in one of the operand
                 // CNTK allows the other operand(s) not having batch axis. But ONNX 
@@ -791,7 +805,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateNode(const FunctionPtr& src,
             }
             else
             {
-                if (isConstant && opName == "BatchNormalization" && (inputIndex > 0 && inputIndex <= 4) 
+                if (isConstant && opName == "BatchNormalization" && (inputIndex > 0 && inputIndex <= 4)
                     && input.Shape().Rank() == 2)
                     // this is a workaround for brainscript models that have rank = 2 for BN inputs.
                     inputArgType = ToTypeProto(input.Shape().SubShape(0, input.Shape().Rank() - 1));
@@ -1040,7 +1054,7 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
             size_t numInferredDimensions(0);
             for (const auto& axisSize : shapeVec)
             {
-                if (axisSize == NDShape::InferredDimension) 
+                if (axisSize == NDShape::InferredDimension)
                 {
                     numInferredDimensions++;
                     if (numInferredDimensions > 1)
@@ -1079,12 +1093,52 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
             {
                 Axis axis = (Axis)(src->Attributes()[L"axis"].Value<Axis>());
                 int64_t axisIndex = ConvertAxisToOnnx(axis, src->Inputs()[0]);
-                std::vector<int64_t> sliceAxes;
-                sliceAxes.push_back(axisIndex);
-                node->AddAttribute(attributesMap[L"axes"], sliceAxes);
+                bool workaroundONNXRT = false;
+                // this code is to workarund a LotusRT bug that fails
+                // to take axes attribute into consideration.
+                // we need to convert op attribute to a default ONNX case
+                // where axes is not set (or set to ordered indices).
+                if (workaroundONNXRT)
+                {
+                    bool hasBatchAxis = src->Inputs()[0].HasBatchAxis();
+                    NDShape inputShape = src->Inputs()[0].Shape();
+                    std::vector<int64_t> sliceAxes;
+                    int numDims = hasBatchAxis ? (inputShape.Rank() + 1) : inputShape.Rank();
+                    for (int onnxAxis = 0; onnxAxis < numDims; onnxAxis++)
+                    {
+                        sliceAxes.push_back(onnxAxis);
+                        if (onnxAxis == 0 && hasBatchAxis)
+                        {
+                            // batch axis
+                            beginIndex.push_back(0);
+                            endIndex.push_back(1);
+                        }
+                        else
+                        {
+                            if (axisIndex == onnxAxis)
+                            {
+                                beginIndex.push_back((int)(src->Attributes()[L"beginIndex"].Value<int>()));
+                                endIndex.push_back((int)(src->Attributes()[L"endIndex"].Value<int>()));
+                            }
+                            else
+                            {
+                                int cntkAxisIndex = numDims - onnxAxis - 1;
+                                beginIndex.push_back(0);
+                                endIndex.push_back(inputShape[cntkAxisIndex]);
+                            }
+                        }
+                    }
+                    node->AddAttribute(attributesMap[L"axes"], sliceAxes);
+                }
+                else
+                {
+                    std::vector<int64_t> sliceAxes;
+                    sliceAxes.push_back(axisIndex);
+                    node->AddAttribute(attributesMap[L"axes"], sliceAxes);
 
-                beginIndex.push_back((int)(src->Attributes()[L"beginIndex"].Value<int>()));
-                endIndex.push_back((int)(src->Attributes()[L"endIndex"].Value<int>()));
+                    beginIndex.push_back((int)(src->Attributes()[L"beginIndex"].Value<int>()));
+                    endIndex.push_back((int)(src->Attributes()[L"endIndex"].Value<int>()));
+                }
             }
 
             std::vector<int64_t> beginIndex64 = Cast<int, int64_t>(beginIndex);
@@ -1107,19 +1161,19 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
 
             head.insert(head.end(), foot.begin(), foot.end());
             string modeStr;
-if (mode == 0)
-modeStr = "constant";
-else if (mode == 1)
-modeStr = "reflect";
-else if (mode == 2)
-NOT_IMPLEMENTED
-else
-LogicError("Invalid 'mode' value encountered in CNTK Pad node.");
+            if (mode == 0)
+                modeStr = "constant";
+            else if (mode == 1)
+                modeStr = "reflect";
+            else if (mode == 2)
+                NOT_IMPLEMENTED
+            else
+                LogicError("Invalid 'mode' value encountered in CNTK Pad node.");
 
-node->AddAttribute("mode", modeStr);
-node->AddAttribute("pads", head);
-if (mode == 0)
-node->AddAttribute("value", value);
+            node->AddAttribute("mode", modeStr);
+            node->AddAttribute("pads", head);
+            if (mode == 0)
+                node->AddAttribute("value", value);
         }
         else if (src->OpName() == L"DepthToSpace" || src->OpName() == L"SpaceToDepth")
         {
@@ -1239,18 +1293,23 @@ node->AddAttribute("value", value);
             node->AddAttribute("dilations", ToINTS(dilations));
             node->AddAttribute("group", (int64_t)1);
 
-            PutAutopadOrPadAttrInNode(node, autoPadding, kernelShape);
+            const NDShape &inputShape = src->Inputs()[1].Shape();
 
             if (transpose)
             {
                 auto outputShape = (NDShape)src->Attributes()[L"outputShape"].Value<NDShape>();
                 node->AddAttribute("output_shape", ToINTS(outputShape, src->Inputs()[1].HasBatchAxis()));
             }
+            else
+            {
+                PutAutopadOrPadAttrInNode(node, inputShape, autoPadding, kernelShape);
+            }
         }
         else if (src->OpName() == L"Pooling")
         {
             auto kernelShape = (NDShape)src->Attributes()[L"poolingWindowShape"].Value<NDShape>();
             auto strides = (NDShape)src->Attributes()[L"strides"].Value<NDShape>();
+            bool ceilOutDim = (bool)src->Attributes()[L"ceilOutDim"].Value<bool>();
             if (strides.Rank() < kernelShape.Rank())
             {
                 strides = strides.AppendShape(NDShape(std::vector<size_t>(kernelShape.Rank() - strides.Rank(), 1)));
@@ -1259,7 +1318,8 @@ node->AddAttribute("value", value);
 
             node->AddAttribute("kernel_shape", ToINTS(kernelShape));
             node->AddAttribute("strides", ToINTS(strides));
-            PutAutopadOrPadAttrInNode(node, autoPadding, kernelShape);
+            const NDShape &inputShape = src->Inputs()[0].Shape();
+            PutAutopadOrPadAttrInNode(node, inputShape, autoPadding, kernelShape, ceilOutDim);
         }
         else if (src->OpName() == L"ReduceElements")
         {
@@ -1288,7 +1348,9 @@ node->AddAttribute("value", value);
     }
 }
 
-void CNTKToONNXHelper::PutAutopadOrPadAttrInNode(ONNXIR::Node* node, const std::vector<bool>& autoPadding, const NDShape& kernelShape)
+void CNTKToONNXHelper::PutAutopadOrPadAttrInNode(ONNXIR::Node* node,
+    const NDShape &inputShape, const std::vector<bool>& autoPadding,
+    const NDShape& kernelShape, bool ceilOutDim)
 {
     // Based on the CNTK node choose to put either the auto_pad or pads attribute in the ONNX node.
 
@@ -1296,14 +1358,16 @@ void CNTKToONNXHelper::PutAutopadOrPadAttrInNode(ONNXIR::Node* node, const std::
     // for 'auto_pad' is implied, and 'auto_pad' attribute should not (must not)
     // be explicitly specified/set.
     bool isExplicitPadValueNeeded = std::find(autoPadding.begin(), autoPadding.end(), false) != autoPadding.end();
-    if (isExplicitPadValueNeeded)
+    if (isExplicitPadValueNeeded && !ceilOutDim)
     {
-        auto padsValueVectorsForONNX = GetONNXPadsAttributeFromCNTKNode(autoPadding, kernelShape);
+        auto padsValueVectorsForONNX = GetONNXPadsAttributeFromCNTKNode(inputShape, autoPadding, kernelShape, ceilOutDim);
         auto lowerPads = ToINTS(padsValueVectorsForONNX.first);
         auto upperPads = ToINTS(padsValueVectorsForONNX.second);
         lowerPads.insert(lowerPads.end(), upperPads.cbegin(), upperPads.cend());
         node->AddAttribute("pads", lowerPads);
     }
+    else if (ceilOutDim)
+        node->AddAttribute("auto_pad", "SAME_LOWER");
     else
         node->AddAttribute("auto_pad", "SAME_UPPER");
 }
@@ -1331,51 +1395,100 @@ std::vector<ONNXIR::NodeArg> CNTKToONNXHelper::MapInputsOrderToONNX(const Functi
     return inputs;
 }
 
+ONNXIR::Node* FindByName(ONNXIR::Graph* graph, const std::string &name)
+{
+    for (ONNXIR::Graph::NodeIterator it = graph->Nodes_begin(); it != graph->Nodes_end(); ++it)
+    {
+        ONNXIR::Node *node = *it;
+
+        const std::vector<ONNXIR::NodeArg>& outputNodeArgs = node->OutputDefs();
+        for (int i = 0; i < outputNodeArgs.size(); i++)
+        {
+            if (outputNodeArgs[i].Name() == name)
+            {
+                return node;
+            }
+        }
+    }
+    return nullptr;
+}
+
 ONNXIR::Node* CNTKToONNXHelper::AddNode(const FunctionPtr& src, ONNXIR::Graph* graph, const std::vector<ONNXIR::NodeArg>& inputs, const std::vector<ONNXIR::NodeArg>& outputs)
 {
     ONNXIR::Node* node = nullptr;
     auto orderedInputs = MapInputsOrderToONNX(src, inputs);
     auto nodeName = src->Name().empty() ? ToString(src->Uid()) : ToString(src->Name());
 
-    //
-    // CNTK Times OP is way more flexible for ONNX, so depend on the inputs and output shape,
-    // we will need to insert some reshapes.
-    //
-    if (src->OpName() == L"Times")
+    if (Operators::SupportBroadcast(src->OpName()))
     {
-        auto input1Shape = orderedInputs[0].Shape();
-        auto input2Shape = orderedInputs[1].Shape();
-        auto outputShape = outputs[0].Shape();
-
+        // when converting CNTK to ONNX with broadcasting, the boardcasting input at right-hand-side
+        // needs to be reshaped. Reshape is not needed if the broadcasting input is a constant. In such case
+        // CreateNode already created a constant with the needed shape. 
+        // If the broadcasting input is not a constant, a reshape operation needs to be inserted. 
+        // The following code does this reshape insertion.
+        const TensorShapeProto* input1Shape = orderedInputs[0].Shape();
+        const TensorShapeProto* input2Shape = orderedInputs[1].Shape();
         int input1Rank = input1Shape->dim_size();
         int input2Rank = input2Shape->dim_size();
-        int outputRank = outputShape->dim_size();
-        int reductionRank = (input1Rank + input2Rank - outputRank) / 2;
-
-        if (reductionRank > 1) // We need to insert reshape.
+        ONNXIR::Node* inputNode2 = FindByName(graph, orderedInputs[1].Name());
+        if (input2Rank < input1Rank && inputNode2 != nullptr && inputNode2->OpType() != "Constant")
         {
-            auto input1Reshape = ReduceRank(input1Shape, reductionRank, true);
-            auto input2Reshape = ReduceRank(input2Shape, reductionRank, false);
+            ONNXIR::NodeArg inputOutput2Arg(orderedInputs[1].Name() + string("_reshape1"), nullptr);
+            inputOutput2Arg.SetShape(*input2Shape);
 
-            UpdateONNXType(src->Inputs()[1].GetDataType(), input1Reshape);
-            UpdateONNXType(src->Inputs()[0].GetDataType(), input2Reshape);
-
-            ONNXIR::NodeArg inputOutput1Arg(orderedInputs[0].Name() + string("_reshape0"), &input1Reshape);
-            ONNXIR::NodeArg inputOutput2Arg(orderedInputs[1].Name() + string("_reshape1"), &input2Reshape);
-
-            auto reshapeNode1 = graph->AddNode(nodeName + string("_reshape0"), "Reshape", "", { orderedInputs[0] }, { inputOutput1Arg });
             auto reshapeNode2 = graph->AddNode(nodeName + string("_reshape1"), "Reshape", "", { orderedInputs[1] }, { inputOutput2Arg });
 
-            reshapeNode1->AddAttribute("shape", ToINTS(input1Reshape));
-            reshapeNode2->AddAttribute("shape", ToINTS(input2Reshape));
+            onnx::TypeProto reshapeTypeProto2 = TensorShapeProtoToTypeProto(input2Shape);
 
-            node = graph->AddNode(nodeName, ToOPName(src), "", { inputOutput1Arg , inputOutput2Arg }, outputs);
+            reshapeNode2->AddAttribute("shape", ToINTS(reshapeTypeProto2));
+
+            node = graph->AddNode(nodeName, ToOPName(src), "", { orderedInputs[0] , inputOutput2Arg }, outputs);
+        }
+        else
+        {
+            node = graph->AddNode(nodeName, ToOPName(src), "", orderedInputs, outputs);
+        }
+    }
+    else
+        //
+        // CNTK Times OP is way more flexible for ONNX, so depend on the inputs and output shape,
+        // we will need to insert some reshapes.
+        //
+        if (src->OpName() == L"Times")
+        {
+            auto input1Shape = orderedInputs[0].Shape();
+            auto input2Shape = orderedInputs[1].Shape();
+            auto outputShape = outputs[0].Shape();
+
+            int input1Rank = input1Shape->dim_size();
+            int input2Rank = input2Shape->dim_size();
+            int outputRank = outputShape->dim_size();
+            int reductionRank = (input1Rank + input2Rank - outputRank) / 2;
+
+            if (reductionRank > 1) // We need to insert reshape.
+            {
+                auto input1Reshape = ReduceRank(input1Shape, reductionRank, true);
+                auto input2Reshape = ReduceRank(input2Shape, reductionRank, false);
+
+                UpdateONNXType(src->Inputs()[1].GetDataType(), input1Reshape);
+                UpdateONNXType(src->Inputs()[0].GetDataType(), input2Reshape);
+
+                ONNXIR::NodeArg inputOutput1Arg(orderedInputs[0].Name() + string("_reshape0"), &input1Reshape);
+                ONNXIR::NodeArg inputOutput2Arg(orderedInputs[1].Name() + string("_reshape1"), &input2Reshape);
+
+                auto reshapeNode1 = graph->AddNode(nodeName + string("_reshape0"), "Reshape", "", { orderedInputs[0] }, { inputOutput1Arg });
+                auto reshapeNode2 = graph->AddNode(nodeName + string("_reshape1"), "Reshape", "", { orderedInputs[1] }, { inputOutput2Arg });
+
+                reshapeNode1->AddAttribute("shape", ToINTS(input1Reshape));
+                reshapeNode2->AddAttribute("shape", ToINTS(input2Reshape));
+
+                node = graph->AddNode(nodeName, ToOPName(src), "", { inputOutput1Arg , inputOutput2Arg }, outputs);
+            }
+            else
+                node = graph->AddNode(nodeName, ToOPName(src), "", orderedInputs, outputs);
         }
         else
             node = graph->AddNode(nodeName, ToOPName(src), "", orderedInputs, outputs);
-    }
-    else
-        node = graph->AddNode(nodeName, ToOPName(src), "", orderedInputs, outputs);
 
     //
     // Copy and validate attributes.
@@ -1385,7 +1498,9 @@ ONNXIR::Node* CNTKToONNXHelper::AddNode(const FunctionPtr& src, ONNXIR::Graph* g
     return node;
 }
 
-std::pair<std::vector<int>, std::vector<int> > CNTKToONNXHelper::GetONNXPadsAttributeFromCNTKNode(const std::vector<bool>& cntkAutoPadding, const NDShape& kernelShape)
+std::pair<std::vector<int>, std::vector<int> > CNTKToONNXHelper::GetONNXPadsAttributeFromCNTKNode(
+    const NDShape &inputShape,
+    const std::vector<bool>& cntkAutoPadding, const NDShape& kernelShape, bool ceilOutDim)
 {
     // Figure out the value for 'pads' ONNX attribute.
 
