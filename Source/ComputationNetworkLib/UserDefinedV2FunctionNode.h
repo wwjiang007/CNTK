@@ -130,7 +130,7 @@ public:
         {
             auto output = outputs[i];
             ::CNTK::NDShape inferredVarShape;
-            // Call this function to retrieve the computer output matrix.
+            // Call this function to retrieve the computed output matrix.
             // The shape is based on what we have provided in the forward.
             auto outputMatrixAndLayout =
                 ::CNTK::Utils::GetCNTKImplMatrixAndMBLayoutFromValueObject<ElemType>(
@@ -146,8 +146,18 @@ public:
             if (output.Shape().HasFreeDimension())
             {
                 this->m_outputsShape[i] = ::CNTK::AsTensorShape(inferredVarShape);
+
                 if (i == 0)
+                {
+                    //std::cout << "SHAPE AT Forward 2222222222222222222222  " << std::string(this->m_outputsShape[i]) << std::endl;
+                    //std::wcout << " Infererred shape " << inferredVarShape.AsString() << std::endl;
                     SetDims(this->m_outputsShape[i], HasMBLayout());
+                    //size_t rows, cols;
+                    //this->DetermineDataSize(rows, cols);
+                    //auto& valueMatrix = this->Value();
+                    //std::cout << "DetermineDataSize rows: " << rows << " cols: " << cols <<"  value rows "<< valueMatrix.GetNumRows() <<" value cols "<< valueMatrix.GetNumCols()<< std::endl;
+
+                }
             }
 
             if (inSEQMode)
@@ -330,17 +340,24 @@ public:
             int matchCount;
 
             auto arguments = m_externalFunction->Arguments();
-            for (size_t i = 0; i < outputs.size() && !matchingDynamicAxesFound; ++i)
+            for (size_t outputIndex = 0; outputIndex < outputs.size() && !matchingDynamicAxesFound; ++outputIndex)
             {
-                auto output = outputs[i];
-                for (size_t j = 0; j < arguments.size(); ++j)
+                auto output = outputs[outputIndex];
+
+                auto numInputs = GetNumInputs();
+                assert(numInputs > 0);
+
+                size_t argIndex = 0;
+                ComputationNodePtr minRankedIniputPtr = nullptr;
+                for (size_t inputIndex = 0; inputIndex < numInputs; ++inputIndex)
                 {
-                    if (!m_inputs[j]->HasMBLayout())
+                    auto& input = InputRef(inputIndex);
+                    if (input.template Is<LearnableParameter<ElemType>>() || (!input.HasMBLayout()))
                     {
                         continue;
-                    }
+                    }    
 
-                    auto inputDynamicAxes = arguments[j].DynamicAxes();
+                    auto inputDynamicAxes = arguments[argIndex++].DynamicAxes();
                     auto outputDynamicAxes = output.DynamicAxes();
 
                     // The number of output dynamic axes should be equal or less
@@ -361,11 +378,31 @@ public:
 
                     if (matchCount == outputDynamicAxes.size())
                     {
-                        assert(m_inputs.size() >= j); // one to one mapping between inputs and arguments?
-                        LinkToMBLayout(InputRef(j).GetMBLayout());
+                        if (minRankedIniputPtr == nullptr || (minRankedIniputPtr->GetSampleLayout().GetRank() > input.GetSampleLayout().GetRank()))
+                        {
+                            minRankedIniputPtr = Input(inputIndex);
+                        }
                         matchingDynamicAxesFound = true;
-                        break;
+
+                        /*
+                        //assert(m_inputs.size() >= j); // one to one mapping between inputs and arguments?                        
+                        LinkToMBLayout(input.GetMBLayout());
+                        std::cout << "MBLayout at the time of validating " << std::string(*GetMBLayout()) << std::endl;
+
+                        size_t rows, cols;
+                        this->DetermineDataSize(rows, cols);                        
+                        std::cout << " Determined size @ VALIDATING" << rows << " " << cols << "SampleLayout "<<std::string(GetSampleLayout()) << std::endl;
+                        std::wcout << "Operation name " << input.GetName() << std::endl;
+                        std::cout<<"input.Tensor rank" << input.GetSampleLayout().GetRank()<<" input.MBLayout "<<std::string(*input.GetMBLayout()) << std::endl;
+                        
+                        //break;
+                        */
                     }
+                }
+
+                if (matchingDynamicAxesFound)
+                {
+                    LinkToMBLayout(minRankedIniputPtr->GetMBLayout());
                 }
             }
 
@@ -400,7 +437,11 @@ public:
             }
 
             this->m_outputsShape[i] = ::CNTK::AsTensorShape(outputNDShape);
-            SetDims(this->m_outputsShape[i], HasMBLayout());
+            if (i == 0)
+            {
+                //std::cout << "SHAPE AT VALIDATE 111111111111111111111111    " << std::string(this->m_outputsShape[i]) << std::endl;
+                SetDims(this->m_outputsShape[i], HasMBLayout());
+            }
         }
     }
 
