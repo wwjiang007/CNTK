@@ -333,18 +333,24 @@ public:
             int matchCount;
 
             auto arguments = m_externalFunction->Arguments();
-            for (size_t i = 0; i < outputs.size() && !matchingDynamicAxesFound; ++i)
+            for (size_t outputIndex = 0; outputIndex < outputs.size() && !matchingDynamicAxesFound; ++outputIndex)
             {
-                auto output = outputs[i];
-                for (size_t j = 0; j < arguments.size(); ++j)
+                auto output = outputs[outputIndex];               
+                auto outputDynamicAxes = output.DynamicAxes();
+                auto numInputs = GetNumInputs();
+                assert(numInputs > 0);
+
+                size_t argIndex = 0;
+                ComputationNodePtr minRankedIniputPtr = nullptr;
+                for (size_t inputIndex = 0; inputIndex < numInputs; ++inputIndex)
                 {
-                    if (!m_inputs[j]->HasMBLayout())
+                    auto& input = InputRef(inputIndex);
+                    if (input.template Is<LearnableParameter<ElemType>>() || (!input.HasMBLayout()))
                     {
                         continue;
                     }
 
-                    auto inputDynamicAxes = arguments[j].DynamicAxes();
-                    auto outputDynamicAxes = output.DynamicAxes();
+                    auto inputDynamicAxes = arguments[argIndex++].DynamicAxes();                   
 
                     // The number of output dynamic axes should be equal or less
                     // than the input dynamic axes.
@@ -364,11 +370,19 @@ public:
 
                     if (matchCount == outputDynamicAxes.size())
                     {
-                        assert(m_inputs.size() >= j); // one to one mapping between inputs and arguments.
-                        LinkToMBLayout(InputRef(j).GetMBLayout());
+                        // Pick the input with the smallest rank.
+                        if (minRankedIniputPtr == nullptr || 
+                            (minRankedIniputPtr->GetSampleLayout().GetRank() > input.GetSampleLayout().GetRank()))
+                        {
+                            minRankedIniputPtr = Input(inputIndex);
+                        }
                         matchingDynamicAxesFound = true;
-                        break;
                     }
+                }
+
+                if (matchingDynamicAxesFound)
+                {
+                    LinkToMBLayout(minRankedIniputPtr->GetMBLayout());
                 }
             }
 
@@ -403,7 +417,10 @@ public:
             }
 
             this->m_outputsShape[i] = ::CNTK::AsTensorShape(outputNDShape);
-            SetDims(this->m_outputsShape[i], HasMBLayout());
+            if (i == 0)
+            {
+                SetDims(this->m_outputsShape[i], HasMBLayout());
+            }
         }
     }
 
