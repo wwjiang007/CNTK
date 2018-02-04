@@ -796,7 +796,7 @@ def test_recurrance_with_udf_with_layers():
     assert np.array_equal(gradient, grad)
     assert np.array_equal(result, x0)
 
-'''
+
 class SimpleUdf(UserFunction):
     def __init__(self, x, name='SimpleUdf'):
         super(SimpleUdf, self).__init__([x], name=name)
@@ -845,4 +845,4 @@ def test_recurrance_with_udf_without_layers():
 
     expected_grad = [np.array([0,0,29,41,21,32,13,21], dtype=np.float32).reshape(4,2)]
     assert np.array_equal(gradient, expected_grad)
-'''
+
