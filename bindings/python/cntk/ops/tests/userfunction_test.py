@@ -743,7 +743,7 @@ def test_udf_in_recurrent_loop():
     with pytest.raises(RuntimeError):
         m.eval([np.arange(10, dtype=np.float32)])
 
-
+'''
 class SimpleRecurrentNode(UserFunction):
     def __init__(self, x, y, name='NewLayer'):
         super(SimpleRecurrentNode, self).__init__([x, y], name=name)
@@ -845,4 +845,4 @@ def test_recurrance_with_udf_without_layers():
 
     expected_grad = [np.array([0,0,29,41,21,32,13,21], dtype=np.float32).reshape(4,2)]
     assert np.array_equal(gradient, expected_grad)
-
+'''
