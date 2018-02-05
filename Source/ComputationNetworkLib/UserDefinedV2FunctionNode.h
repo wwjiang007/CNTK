@@ -557,11 +557,19 @@ namespace Microsoft {
                             LogicError("The DataType '%s' of the external user defined Function's output does not match the internal ComputationNode's ElemType '%s'.",
                                 DataTypeName(output.GetDataType()),
                                 DataTypeName(::CNTK::AsDataType<ElemType>()));
-                        }
+                        }                       
 
-                        this->m_outputsMBLayout[i] = m_pMBLayout;
+                        
                         if (layoutNotInitialized)
                         {
+                            if (output.DynamicAxes().empty())
+                            {                                
+                                this->m_outputsMBLayout[i] = nullptr;
+                            }
+                            else
+                            {
+                                this->m_outputsMBLayout[i] = m_pMBLayout;
+                            }
                             this->m_outputsHasNewMBLayout[i] = true;
                         }
 
