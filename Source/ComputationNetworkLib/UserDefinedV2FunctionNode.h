@@ -45,6 +45,84 @@ namespace Microsoft {
                     return std::any_of(outputs.begin(), outputs.end(), [](const ::CNTK::Variable& output) { return output.Shape().HasFreeDimension(); });
                 }
 
+                virtual void ForwardProp(const FrameRange& fr) override
+                {
+                    this->m_outputsValue[0] = m_value;
+
+                    // Get the arguments of the external function
+                    auto arguments = m_externalFunction->Arguments();
+                    std::unordered_map<::CNTK::Variable, ::CNTK::ValuePtr> argumentValues;
+                    auto numInputs = GetNumInputs();
+                    size_t j = 0;
+                    for (size_t i = 0; i < numInputs; ++i)
+                    {
+                        auto& input = InputRef(i);
+                        if (input.template Is<LearnableParameter<ElemType>>())
+                            continue;
+
+                        auto argumentVar = arguments[j++];
+                        auto argumentShape = ::CNTK::AsNDShape(input.GetSampleLayout());
+                        auto argumentValue = ::CNTK::Utils::GetValueObjectFromCNTKImplMatrixAndMBLayout(argumentShape, argumentVar.DynamicAxes(), input.Value(), input.GetMBLayout());
+                        argumentValues.insert(std::make_pair(argumentVar, argumentValue));
+                    }
+                    assert(j == arguments.size());
+
+                    auto outputs = m_externalFunction->Outputs();
+
+                    // TODO: Instead of passing null for output values, we should have the forward call directly produce the outputs in the output Value() of this node
+                    std::unordered_map<::CNTK::Variable, ::CNTK::ValuePtr> outputValues;
+                    for (auto output : outputs)
+                        outputValues.insert({ output, nullptr });
+
+                    std::unordered_set<::CNTK::Variable> outputsToRetainBackwardStateFor;
+                    if (Environment().IsTraining())
+                        outputsToRetainBackwardStateFor.insert(outputs.begin(), outputs.end());
+
+                    auto computeDevice = ::CNTK::AsDeviceDescriptor(InputRef(0).Value().GetDeviceId());
+                    m_currentBackpropStatePtr = m_externalFunction->Forward(argumentValues, outputValues, computeDevice, outputsToRetainBackwardStateFor);
+
+                    // Copy the computed output
+                    for (size_t i = 0; i < outputs.size(); ++i)
+                    {
+                        auto output = outputs[i];
+                        ::CNTK::NDShape inferredVarShape;
+                        auto outputMatrixAndLayout = ::CNTK::Utils::GetCNTKImplMatrixAndMBLayoutFromValueObject<ElemType>(output, outputValues[output], &inferredVarShape);
+
+                        if (inferredVarShape.IsUnknown() || inferredVarShape.HasUnboundDimension())
+                            LogicError("The output shape '%S' of an external user defined Function '%S' must be fully defined.", inferredVarShape.AsString().c_str(), m_externalFunction->AsString().c_str());
+
+                        if (output.Shape().HasFreeDimension())
+                        {
+                            this->m_outputsShape[i] = ::CNTK::AsTensorShape(inferredVarShape);
+                            if (i == 0)
+                                SetDims(this->m_outputsShape[i], HasMBLayout());
+                        }
+
+                        this->m_outputsValue[i]->SetValue(*outputMatrixAndLayout.first);
+
+                        if ((this->m_outputsMBLayout[i] != nullptr) && (outputMatrixAndLayout.second == nullptr))
+                            LogicError("The UserDefinedFunction node has a non-null output MBLayout but none found from the '%S' user Function::Forward output Value", m_externalFunction->Name().c_str());
+                        else if ((this->m_outputsMBLayout[i] == nullptr) && (outputMatrixAndLayout.second != nullptr))
+                            LogicError("The UserDefinedFunction node does not have an output MBLayout but the '%S' user Function::Forward output Value has a non-null layout", m_externalFunction->Name().c_str());
+                        else if ((this->m_outputsMBLayout[i] == nullptr) && (outputMatrixAndLayout.second == nullptr))
+                            ;
+                        else
+                        {
+                            if (this->m_outputsHasNewMBLayout[i])
+                                this->m_outputsMBLayout[i]->CopyFrom(outputMatrixAndLayout.second);
+                            else
+                            {
+                                if (*this->m_outputsMBLayout[i] != *outputMatrixAndLayout.second)
+                                    LogicError("The MBLayout 'NumSequences=%zu, NumTimeSteps=%zu' of the output computed by the external function '%S' does not match the expected MBLayout 'NumSequences=%zu, NumTimeSteps=%zu'.",
+                                        outputMatrixAndLayout.second->GetNumSequences(), outputMatrixAndLayout.second->GetNumTimeSteps(),
+                                        m_externalFunction->Name().c_str(),
+                                        this->m_outputsMBLayout[i]->GetNumSequences(), this->m_outputsMBLayout[i]->GetNumTimeSteps());
+                            }
+                        }
+                    }
+                }
+                /*
+
                 // This function is called in both PAR and SEQ modes of execution.
                 // In PAR mode, all frames are included at once and the MBLayout of the
                 // function defines the entire output.
@@ -186,6 +264,7 @@ namespace Microsoft {
                         }
                     }
                 }
+                */
 
                 /*
                 // Similar to forward, this function also getting called from both PAR and
