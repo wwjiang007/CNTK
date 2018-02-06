@@ -397,7 +397,7 @@ namespace Microsoft {
                     }
                 }
                 */
-
+     
                 virtual void BackpropTo(const size_t inputIndex, const FrameRange& fr) override
                 {
                     if (m_currentBackpropStatePtr == nullptr)
@@ -475,108 +475,52 @@ namespace Microsoft {
                 {
                     Base::Validate(isFinalValidationPass);
 
-                    // For UDF we need to infer the MBLayout for the function.
-                    // The following code, will find the first output that has 
-                    // dynamic axes similar to one of the inputs and use the
-                    // MBLayout of that input as the UDF's MBLayout.
-
                     auto outputs = m_externalFunction->Outputs();
                     bool layoutNotInitialized = (m_pMBLayout == nullptr);
-
-                    if (layoutNotInitialized)
+                    for (size_t i = 0; i < outputs.size(); ++i)
                     {
-                        bool matchingDynamicAxesFound = false;
-                        int matchCount;
+                        auto output = outputs[i];
 
-                        auto arguments = m_externalFunction->Arguments();
-                        for (size_t outputIndex = 0; outputIndex < outputs.size(); ++outputIndex)
+                        if (output.GetDataType() != ::CNTK::AsDataType<ElemType>())
                         {
-                            auto output = outputs[outputIndex];
+                            LogicError("The DataType '%s' of the external user defined Function's output does not match the internal ComputationNode's ElemType '%s'.",
+                                DataTypeName(output.GetDataType()),
+                                DataTypeName(::CNTK::AsDataType<ElemType>()));
+                        }
+
+                        auto outputNDShape = output.Shape();
+                        if (layoutNotInitialized)
+                        {
                             auto outputDynamicAxes = output.DynamicAxes();
-                            auto numInputs = GetNumInputs();
-                            assert(numInputs > 0);
-
-                            size_t argIndex = 0;
-                            ComputationNodePtr minRankedIniputPtr = nullptr;
-                            for (size_t inputIndex = 0; inputIndex < numInputs; ++inputIndex)
+                            if (outputDynamicAxes.empty())
                             {
-                                auto& input = InputRef(inputIndex);
-                                if (input.template Is<LearnableParameter<ElemType>>() || (!input.HasMBLayout()))
-                                {
-                                    continue;
-                                }
-
-                                auto inputDynamicAxes = arguments[argIndex++].DynamicAxes();
-
-                                // The number of output dynamic axes should be equal or less
-                                // than the input dynamic axes.
-                                if (outputDynamicAxes.size() > inputDynamicAxes.size())
-                                {
-                                    continue;
-                                }
-
-                                matchCount = 0;
-                                for (size_t k = 0; k < outputDynamicAxes.size(); ++k)
-                                {
-                                    if (inputDynamicAxes[k] == outputDynamicAxes[k])
-                                    {
-                                        ++matchCount;
-                                    }
-                                }
-
-                                if (matchCount == outputDynamicAxes.size())
-                                {
-                                    // Pick the input with the smallest rank.
-                                    if (minRankedIniputPtr == nullptr ||
-                                        (minRankedIniputPtr->GetSampleLayout().GetRank() > input.GetSampleLayout().GetRank()))
-                                    {
-                                        minRankedIniputPtr = Input(inputIndex);
-                                    }
-                                    matchingDynamicAxesFound = true;
-                                }
+                                this->m_outputsHasNewMBLayout[i] = true;
+                                this->m_outputsMBLayout[i] = nullptr;
                             }
-
-                            if (matchingDynamicAxesFound)
+                            else
                             {
-
-                                if (output.DynamicAxes().empty())
-                                {
-                                    this->m_outputsMBLayout[outputIndex] = nullptr;
-                                }
-                                else
-                                {
-                                    this->m_outputsMBLayout[outputIndex] = minRankedIniputPtr->GetMBLayout();
-                                }
-                                this->m_outputsHasNewMBLayout[outputIndex] = true;
-                            }
-
-                            if (output.GetDataType() != ::CNTK::AsDataType<ElemType>())
-                            {
-                                LogicError("The DataType '%s' of the external user defined Function's output does not match the internal ComputationNode's ElemType '%s'.",
-                                    DataTypeName(output.GetDataType()),
-                                    DataTypeName(::CNTK::AsDataType<ElemType>()));
-                            }
-
-                            auto outputNDShape = output.Shape();
-                            for (size_t k = 0; k < outputNDShape.Rank(); ++k)
-                            {
-                                if ((outputNDShape[k] == ::CNTK::NDShape::FreeDimension) || (outputNDShape[k] == ::CNTK::NDShape::InferredDimension))
-                                    outputNDShape[k] = 1;
-                            }
-
-                            this->m_outputsShape[outputIndex] = ::CNTK::AsTensorShape(outputNDShape);
-                            if (outputIndex == 0)
-                            {
-                                m_pMBLayout = this->m_outputsMBLayout[outputIndex];
-                                SetDims(this->m_outputsShape[outputIndex], HasMBLayout());
+                                this->m_outputsMBLayout[i] = make_shared<MBLayout>(); // this generates a new layout
+                                this->m_outputsMBLayout[i]->SetUniqueAxisName(InternalDynamicAxisNameFromDynamicAxes(output.DynamicAxes()));
+                                this->m_outputsHasNewMBLayout[i] = true;
                             }
                         }
 
-                        if (!matchingDynamicAxesFound)
+                        for (size_t k = 0; k < outputNDShape.Rank(); ++k)
                         {
-                            InferMBLayoutFromInputsForStandardCase(isFinalValidationPass);
+                            if ((outputNDShape[k] == ::CNTK::NDShape::FreeDimension) || (outputNDShape[k] == ::CNTK::NDShape::InferredDimension))
+                                outputNDShape[k] = 1;
                         }
-                    }                    
+
+                        this->m_outputsShape[i] = ::CNTK::AsTensorShape(outputNDShape);
+
+                        if (i == 0)
+                        {
+                            if (layoutNotInitialized)
+                                m_pMBLayout = this->m_outputsMBLayout[i];
+
+                            SetDims(this->m_outputsShape[i], HasMBLayout());
+                        }
+                    }
                 }
 
             private:
