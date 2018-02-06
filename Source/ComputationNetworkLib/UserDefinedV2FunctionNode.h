@@ -489,7 +489,7 @@ namespace Microsoft {
                         int matchCount;
 
                         auto arguments = m_externalFunction->Arguments();
-                        for (size_t outputIndex = 0; outputIndex < outputs.size() && !matchingDynamicAxesFound; ++outputIndex)
+                        for (size_t outputIndex = 0; outputIndex < outputs.size(); ++outputIndex)
                         {
                             auto output = outputs[outputIndex];
                             auto outputDynamicAxes = output.DynamicAxes();
@@ -538,7 +538,37 @@ namespace Microsoft {
 
                             if (matchingDynamicAxesFound)
                             {
-                                LinkToMBLayout(minRankedIniputPtr->GetMBLayout());
+
+                                if (output.DynamicAxes().empty())
+                                {
+                                    this->m_outputsMBLayout[outputIndex] = nullptr;
+                                }
+                                else
+                                {
+                                    this->m_outputsMBLayout[outputIndex] = minRankedIniputPtr->GetMBLayout();
+                                }
+                                this->m_outputsHasNewMBLayout[outputIndex] = true;
+                            }
+
+                            if (output.GetDataType() != ::CNTK::AsDataType<ElemType>())
+                            {
+                                LogicError("The DataType '%s' of the external user defined Function's output does not match the internal ComputationNode's ElemType '%s'.",
+                                    DataTypeName(output.GetDataType()),
+                                    DataTypeName(::CNTK::AsDataType<ElemType>()));
+                            }
+
+                            auto outputNDShape = output.Shape();
+                            for (size_t k = 0; k < outputNDShape.Rank(); ++k)
+                            {
+                                if ((outputNDShape[k] == ::CNTK::NDShape::FreeDimension) || (outputNDShape[k] == ::CNTK::NDShape::InferredDimension))
+                                    outputNDShape[k] = 1;
+                            }
+
+                            this->m_outputsShape[outputIndex] = ::CNTK::AsTensorShape(outputNDShape);
+                            if (outputIndex == 0)
+                            {
+                                m_pMBLayout = this->m_outputsMBLayout[outputIndex];
+                                SetDims(this->m_outputsShape[outputIndex], HasMBLayout());
                             }
                         }
 
@@ -546,46 +576,7 @@ namespace Microsoft {
                         {
                             InferMBLayoutFromInputsForStandardCase(isFinalValidationPass);
                         }
-                    }
-
-                    for (size_t i = 0; i < outputs.size(); ++i)
-                    {
-                        auto output = outputs[i];
-
-                        if (output.GetDataType() != ::CNTK::AsDataType<ElemType>())
-                        {
-                            LogicError("The DataType '%s' of the external user defined Function's output does not match the internal ComputationNode's ElemType '%s'.",
-                                DataTypeName(output.GetDataType()),
-                                DataTypeName(::CNTK::AsDataType<ElemType>()));
-                        }                       
-
-                        
-                        if (layoutNotInitialized)
-                        {
-                            if (output.DynamicAxes().empty())
-                            {                                
-                                this->m_outputsMBLayout[i] = nullptr;
-                            }
-                            else
-                            {
-                                this->m_outputsMBLayout[i] = m_pMBLayout;
-                            }
-                            this->m_outputsHasNewMBLayout[i] = true;
-                        }
-
-                        auto outputNDShape = output.Shape();
-                        for (size_t k = 0; k < outputNDShape.Rank(); ++k)
-                        {
-                            if ((outputNDShape[k] == ::CNTK::NDShape::FreeDimension) || (outputNDShape[k] == ::CNTK::NDShape::InferredDimension))
-                                outputNDShape[k] = 1;
-                        }
-
-                        this->m_outputsShape[i] = ::CNTK::AsTensorShape(outputNDShape);
-                        if (i == 0)
-                        {
-                            SetDims(this->m_outputsShape[i], HasMBLayout());
-                        }
-                    }
+                    }                    
                 }
 
             private:
