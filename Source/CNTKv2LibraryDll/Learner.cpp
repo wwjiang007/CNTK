@@ -35,11 +35,11 @@ using namespace std;
 
 namespace CNTK
 {
-    CNTK_API const std::wstring LocalLearner::MinibatchSizeKey = L"MinibatchSize";
+    CNTK_API const std::wstring Learner::MinibatchSizeKey = L"MinibatchSize";
     ///
     /// A special value that can be used for the minibatchSize to indicate that the reference minibatch size is not specified.
     ///
-    CNTK_API const size_t LocalLearner::IgnoredMinibatchSize = TrainingParameterSchedule<double>::IgnoredMinibatchSize;
+    CNTK_API const size_t Learner::IgnoredMinibatchSize = TrainingParameterSchedule<double>::IgnoredMinibatchSize;
 
   
     // This method completely replaces the current schedule with the new schedule. However, since
