@@ -26,7 +26,6 @@ namespace CNTK
         void ConvertToOrdered(const std::unordered_map<Parameter, NDArrayViewPtr>& gradientValues, std::vector<std::pair<Parameter, NDArrayViewPtr>>& result, std::unordered_map<Parameter, NDArrayViewPtr>* convertedGradientValues = nullptr);
 
         std::vector<std::pair<Parameter, NDArrayViewPtr>> m_gradientBuffer;
-        std::vector<Parameter> m_parameters;
 
         bool m_convertSparseToDense;
 

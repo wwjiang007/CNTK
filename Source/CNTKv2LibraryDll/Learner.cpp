@@ -35,18 +35,18 @@ using namespace std;
 
 namespace CNTK
 {
-    CNTK_API const std::wstring Learner::MinibatchSizeKey = L"MinibatchSize";
+    CNTK_API const std::wstring LocalLearner::MinibatchSizeKey = L"MinibatchSize";
     ///
     /// A special value that can be used for the minibatchSize to indicate that the reference minibatch size is not specified.
     ///
-    CNTK_API const size_t Learner::IgnoredMinibatchSize = TrainingParameterSchedule<double>::IgnoredMinibatchSize;
+    CNTK_API const size_t LocalLearner::IgnoredMinibatchSize = TrainingParameterSchedule<double>::IgnoredMinibatchSize;
 
   
     // This method completely replaces the current schedule with the new schedule. However, since
     // the new schedule starts at time 0 and the current time (in terms of the number of elapsed
     // samples or sweeps) t can be greater than 0, we need to adjust the new schedule by t time
     // units, so that it takes effect from the current point in time onwards.
-    CNTK_API void Learner::ResetLearningRate(const LearningRateSchedule& learningRateSchedule)
+    CNTK_API void LocalLearner::ResetLearningRate(const LearningRateSchedule& learningRateSchedule)
     {
         m_learningRateSchedule.m_schedule.clear();
         m_learningRateSchedule.m_epochSize = learningRateSchedule.m_epochSize;
@@ -207,7 +207,7 @@ namespace CNTK
     LearnerBase::LearnerBase(const vector<Parameter>& parameters,
                              const LearningRateSchedule& learningRateSchedule,
                              AdditionalLearningOptions additionalOptions)
-                             : Learner(parameters, learningRateSchedule, additionalOptions),
+                             : LocalLearner(parameters, learningRateSchedule, additionalOptions),
                              m_noiseInjectionSeed(Internal::GenerateRandomSeed()),
                              m_masterParameterUpdated(false)
     {

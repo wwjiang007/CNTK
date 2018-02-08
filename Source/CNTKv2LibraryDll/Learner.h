@@ -15,7 +15,7 @@ namespace CNTK
     // An abstract base class at the root of the standard learners hierarchy
     // It implements most of the learner functionality, except for the actual update function,
     // and adds a few pre-/postprocessing methods (which are invoked before and after the update).
-    class LearnerBase : public Learner
+    class LearnerBase : public LocalLearner
     {
     public:
 //        virtual bool Update(std::unordered_map<Parameter, NDArrayViewPtr>& gradientValues, size_t trainingSampleCount, bool sweepEnd = false) override;
@@ -46,7 +46,7 @@ namespace CNTK
         // Returns current learning rate.
         double LearningRate(size_t minibatchSize) const
         {
-            auto learningRate = Learner::LearningRate();
+            auto learningRate = LocalLearner::LearningRate();
             if (IsCompatibleMode(m_learningRateSchedule))
             {
                 if (IsCompatibleMode())

@@ -700,8 +700,9 @@ public:
 %ignore CNTK::Function::Load(std::istream&, const DeviceDescriptor&);
 
 %feature("director") CNTK::Learner;
-%feature("nodirector") CNTK::Learner::Parameters;
-%feature("nodirector") CNTK::Learner::ResetLearningRate;
+%ignore CNTK::Learner::GetOptions;
+%ignore CNTK::Learner::Parameters;
+%ignore CNTK::Learner::GetLearningRateSchedule;
 
 %feature("director") CNTK::TrainingSession;
 %feature("nodirector") CNTK::TrainingSession::OnMinibatchStart;
@@ -1480,6 +1481,7 @@ std::unordered_map<CNTK::StreamInformation, std::pair<CNTK::NDArrayViewPtr, CNTK
 %shared_ptr(CNTK::NDMask)
 %shared_ptr(CNTK::BackPropState)
 %shared_ptr(CNTK::Learner)
+%shared_ptr(CNTK::LocalLearner)
 %shared_ptr(CNTK::MinibatchSource)
 %shared_ptr(CNTK::DataDeserializer)
 %shared_ptr(CNTK::Chunk)

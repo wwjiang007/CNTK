@@ -4875,7 +4875,7 @@ namespace CNTK
         CNTK_API void SetMinibatchSize(size_t minibatchSize) { m_minibatchSize = minibatchSize; }
     private:
 
-        friend class Learner;
+        friend class LocalLearner;
 
         CNTK_API void ConstructSchedule(const std::vector<std::pair<size_t, T>>& schedule);
 
@@ -4960,54 +4960,36 @@ namespace CNTK
     ///
     CNTK_API void SetDefaultUnitGainValue(bool value);
 
-    ///
-    /// Abstraction for learning a subset of parameters of a learnable Function using first order gradient values.
-    /// For example momentum, AdaGrad, RMSProp, etc. are different types of learners with their own algorithms for
-    /// learning parameter values using first order gradients.
-    ///
     class Learner
     {
     public:
         ///
         /// A key that is associated with MinibatchSize.
         ///
+
         CNTK_API static const std::wstring MinibatchSizeKey;
         ///
         /// A special value that can be used for the minibatchSize to indicate that the reference minibatch size is not specified.
         ///
         CNTK_API static const size_t IgnoredMinibatchSize;
 
-    public:
-        //
-        // Method to update the parameters associated with this learner. By returning false, this method indicates that
-        // learning has stopped for all of the parameters associated with this learner
-        //
-        virtual bool Update(std::unordered_map<Parameter, NDArrayViewPtr>& gradientValues, size_t trainingSampleCount, bool sweepEnd) = 0;
-
-        ///
-        /// Returns the set of parameters associated with this learner.
-        ///
-        virtual const std::vector<Parameter>& Parameters() const { return m_parameters; }
+    public:        
+        virtual ~Learner() {}
 
         ///
         /// Optionally overridable method to checkpoint the learner's state.
         ///
-        virtual Dictionary CreateCheckpoint() { return Dictionary(); }
+        CNTK_API virtual Dictionary CreateCheckpoint() = 0;
 
         ///
         /// Optionally overridable method to restore the learner's state from a previous checkpoint.
         ///
-        virtual void RestoreFromCheckpoint(const Dictionary&) { NOT_IMPLEMENTED }
+        CNTK_API virtual void RestoreFromCheckpoint(const Dictionary&) = 0;
 
         ///
-        /// Destruct this Learner.
+        /// Returns the set of parameters associated with this learner.
         ///
-        virtual ~Learner() {}
-
-        ///
-        /// This method needs to be explicitly overriden in subclasses.
-        ///
-        virtual size_t CurrentVersion() const { NOT_IMPLEMENTED }
+        virtual const std::vector<Parameter>& Parameters() const = 0;
 
         ///
         /// Sets a new learning rate overriding the schedule parameter used to construct this learner.
@@ -5015,48 +4997,33 @@ namespace CNTK
         /// the 0 offset in the new schedule corresponds to the current value of elapsed samples/sweeps,
         /// and it takes effect from the current position in the training process onwards.
         ///
-        CNTK_API virtual void ResetLearningRate(const LearningRateSchedule& learningRateSchedule);
+        CNTK_API virtual void ResetLearningRate(const LearningRateSchedule& learningRateSchedule) = 0;
+
+        ///
+        /// Returns current learning rate.
+        ///
+        CNTK_API virtual double LearningRate() const = 0;
+
+        //
+        // Method to update the parameters associated with this learner. By returning false, this method indicates that
+        // learning has stopped for all of the parameters associated with this learner
+        //
+        CNTK_API virtual bool Update(std::unordered_map<Parameter, NDArrayViewPtr>& gradientValues, size_t trainingSampleCount, bool sweepEnd) = 0;
+
+        ///
+        /// Specifies progress writers that should be used to report any relevant stats.
+        ///
+        CNTK_API virtual void AddProgressWriters(const std::vector<ProgressWriterPtr>& progressWriters) = 0;
 
         ///
         /// Resets smoothed gradients.
         ///
         virtual void ResetSmoothedGradients() = 0;
 
-        ///
-        /// Returns current learning rate.
-        ///
-        virtual double LearningRate() const
-        {
-            return GetCurrentTrainingParameterValue<double>(m_learningRateSchedule);
-        }
+        CNTK_API virtual Dictionary& GetOptions() =0 ;
+        CNTK_API virtual const Dictionary& GetOptions() const = 0;
 
-        size_t TotalNumberOfSamplesSeen() const
-        {
-            return m_sampleCount;
-        }
-
-        size_t TotalNumberOfMinibatchesSeen() const
-        {
-            return m_minibatchCount;
-        }
-
-        size_t TotalNumberOfSweepsSeen() const
-        {
-            return m_sweepCount;
-        }
-
-        ///
-        /// Specifies progress writers that should be used to report any relevant stats.
-        ///
-        void AddProgressWriters(const std::vector<ProgressWriterPtr>& progressWriters)
-        {
-            m_progressWriters.insert(progressWriters.begin(), progressWriters.end());
-        }
-
-        CNTK_API Dictionary& GetOptions() { return m_additionalOptions.dictOptions; }
-        CNTK_API const Dictionary& GetOptions() const { return m_additionalOptions.dictOptions; }
-
-        ///In the litature, usually the learner hyper-parameters, such as the learning rates and other hyper-parameters (such as those 
+        ///In the literature, usually the learner hyper-parameters, such as the learning rates and other hyper-parameters (such as those 
         ///in momentum SGD or ADAM), are chosen for the specified minibatch size. However, for efficient implementation and for distributed training,
         ///CNTK can vary the actual minibatch sizes for better computational efficiency. Therefore CNTK allows users to set
         ///the reference minibatch size. CNTK will try its best to adjust the learning hyper-parameters internally to match the
@@ -5066,11 +5033,77 @@ namespace CNTK
         ///Note the underlying TrainingParameterSchedule's reference minibatch size setting can over this reference minibatch size
         ///setting and be specialized to its own reference minibatch size. However, this is only suggested for advanced
         ///users.
-        CNTK_API void SetMinibatchSize(std::size_t minibatchSize) { GetOptions().Add(MinibatchSizeKey, minibatchSize); }
-        CNTK_API std::size_t GetMinibatchSize() const { return GetOptions().GetOrElse(MinibatchSizeKey, IgnoredMinibatchSize); }
+        CNTK_API virtual void SetMinibatchSize(std::size_t minibatchSize) = 0;
+        CNTK_API virtual std::size_t GetMinibatchSize() const = 0;
 
-        CNTK_API void SetLearningRateSchedule(const LearningRateSchedule& learningRateSchedule) { m_learningRateSchedule = learningRateSchedule; }
-        CNTK_API const LearningRateSchedule& GetLearningRateSchedule() const { return m_learningRateSchedule; }
+        CNTK_API virtual void SetLearningRateSchedule(const LearningRateSchedule& learningRateSchedule) = 0;
+        CNTK_API virtual const LearningRateSchedule& GetLearningRateSchedule() const = 0;
+
+        ///
+        ///Return whether the learner is in literature compatible mode to use mean gradient and the adjustment 
+        ///of the parameters if necessary.
+        ///
+        CNTK_API virtual bool IsCompatibleMode() const = 0;
+
+        virtual size_t TotalNumberOfSamplesSeen() const = 0;    
+
+        virtual size_t TotalNumberOfMinibatchesSeen() const = 0;    
+
+        virtual size_t TotalNumberOfSweepsSeen() const = 0; 
+    };
+
+    ///
+    /// Abstraction for learning a subset of parameters of a learnable Function using first order gradient values.
+    /// For example momentum, AdaGrad, RMSProp, etc. are different types of learners with their own algorithms for
+    /// learning parameter values using first order gradients.
+    ///
+    class LocalLearner: public Learner
+    {
+    public:
+        ///
+        /// Destruct this LocalLearner.
+        ///
+        virtual ~LocalLearner() {}
+
+        const std::vector<Parameter>& Parameters() const override { return m_parameters; }
+
+        Dictionary CreateCheckpoint() override { return Dictionary(); }
+        
+        double LearningRate() const override
+        {
+            return GetCurrentTrainingParameterValue<double>(m_learningRateSchedule);
+        }
+
+        CNTK_API void ResetLearningRate(const LearningRateSchedule& learningRateSchedule) override;
+
+        size_t TotalNumberOfSamplesSeen() const override
+        {
+            return m_sampleCount;
+        }
+
+        size_t TotalNumberOfMinibatchesSeen() const override
+        {
+            return m_minibatchCount;
+        }
+
+        size_t TotalNumberOfSweepsSeen() const override
+        {
+            return m_sweepCount;
+        }
+
+        void AddProgressWriters(const std::vector<ProgressWriterPtr>& progressWriters) override
+        {
+            m_progressWriters.insert(progressWriters.begin(), progressWriters.end());
+        }
+
+        Dictionary& GetOptions() override { return m_additionalOptions.dictOptions; }
+        const Dictionary& GetOptions() const override { return m_additionalOptions.dictOptions; }
+
+        void SetMinibatchSize(std::size_t minibatchSize) override { GetOptions().Add(MinibatchSizeKey, minibatchSize); }
+        std::size_t GetMinibatchSize() const override { return GetOptions().GetOrElse(MinibatchSizeKey, IgnoredMinibatchSize); }
+
+        void SetLearningRateSchedule(const LearningRateSchedule& learningRateSchedule) override { m_learningRateSchedule = learningRateSchedule; }
+        const LearningRateSchedule& GetLearningRateSchedule() const override { return m_learningRateSchedule; }
 
         ///Return whether the learning schedule indicates a literature compatible mode to use mean gradient and potentially other adjustment of the parameters if necessary.
         template<typename T>
@@ -5079,20 +5112,20 @@ namespace CNTK
             return schedule.GetMinibatchSize() == IgnoredMinibatchSize;
         }
 
-        ///
-        ///Return whether the learner is in literature compatible mode to use mean gradient and the adjustment 
-        ///of the parameters if necessary.
-        ///
-        CNTK_API bool IsCompatibleMode() const
+        bool IsCompatibleMode() const override
         {
             if (GetOptions().Contains(MinibatchSizeKey))
             {
                 return GetMinibatchSize() == IgnoredMinibatchSize;
             }
             else
-                //if the learner minbiatch size is not set, by default it is not in compatible mode.
+                //if the learner minibatch size is not set, by default it is not in compatible mode.
                 return false;
         }
+
+        void RestoreFromCheckpoint(const Dictionary&) override { NOT_IMPLEMENTED }
+
+        virtual size_t CurrentVersion() const { NOT_IMPLEMENTED }
 
     protected:
         ///
@@ -5105,7 +5138,7 @@ namespace CNTK
             return schedule[count];
         }
 
-        Learner(const std::vector<Parameter>& parameters, const LearningRateSchedule& learningRateSchedule, const AdditionalLearningOptions& additionalOptions = AdditionalLearningOptions())
+        LocalLearner(const std::vector<Parameter>& parameters, const LearningRateSchedule& learningRateSchedule, const AdditionalLearningOptions& additionalOptions = AdditionalLearningOptions())
             : m_parameters(parameters),
             m_learningRateSchedule(learningRateSchedule),
             m_additionalOptions(additionalOptions),
@@ -5221,7 +5254,7 @@ namespace CNTK
     ///
     /// Distributed Learner.
     ///
-    class DistributedLearner : public Learner
+    class DistributedLearner: public Learner
     {
     public:
         ///
@@ -5238,12 +5271,12 @@ namespace CNTK
             return Update(gradientValues, info);
         }
 
-        virtual void ResetLearningRate(const LearningRateSchedule& learningRateSchedule)
+        void ResetLearningRate(const LearningRateSchedule& learningRateSchedule) override
         {
             m_learner->ResetLearningRate(learningRateSchedule);
         }
 
-        virtual double LearningRate() const
+        double LearningRate() const override
         {
             return m_learner->LearningRate();
         }
@@ -5282,20 +5315,65 @@ namespace CNTK
 
         //
         // Method to do loss and eval metrics aggregation across workers before summarization. 
-        // Eg BlockMomentumUpdateAndFiltering BMUF needs an aggregation of metrics. 
+        // E.g. BlockMomentumUpdateAndFiltering BMUF needs an aggregation of metrics. 
         // Arguments are local training loss value and local eval criterion value.
         //
         virtual void DoAggregateMetricsIfNeeded(NDArrayViewPtr&, NDArrayViewPtr&)
         {
         }
 
+        ///
+        /// Optionally overridable method to checkpoint the learner's state.
+        ///
+        Dictionary CreateCheckpoint() override { return Dictionary(); }
+
+        ///
+        /// Returns the set of parameters associated with this learner.
+        ///
+        const std::vector<Parameter>& Parameters() const override { return m_learner->Parameters(); }
+
+        void AddProgressWriters(const std::vector<ProgressWriterPtr>& progressWriters) override
+        {
+            m_progressWriters.insert(progressWriters.begin(), progressWriters.end());
+        }
+
+        Dictionary& GetOptions() override { return m_learner->GetOptions(); }
+        const Dictionary& GetOptions() const override { return m_learner->GetOptions(); }
+
+        void SetMinibatchSize(std::size_t minibatchSize) override { m_learner->GetOptions().Add(MinibatchSizeKey, minibatchSize); }
+        std::size_t GetMinibatchSize() const override { return m_learner->GetOptions().GetOrElse(MinibatchSizeKey, IgnoredMinibatchSize); }
+
+        void SetLearningRateSchedule(const LearningRateSchedule& learningRateSchedule) override { m_learner->SetLearningRateSchedule(learningRateSchedule); }
+        const LearningRateSchedule& GetLearningRateSchedule() const override { return m_learner->GetLearningRateSchedule(); }
+        
+        bool IsCompatibleMode() const override
+        {
+            if (GetOptions().Contains(MinibatchSizeKey))
+            {
+                return GetMinibatchSize() == IgnoredMinibatchSize;
+            }
+            else
+                //if the learner minibatch size is not set, by default it is not in compatible mode.
+                return false;
+        }
+
+        ///
+        /// Optionally overridable method to restore the learner's state from a previous checkpoint.
+        ///
+        void RestoreFromCheckpoint(const Dictionary&) override { NOT_IMPLEMENTED }
+
+        size_t TotalNumberOfSamplesSeen() const override { NOT_IMPLEMENTED }
+
+        size_t TotalNumberOfMinibatchesSeen() const override { NOT_IMPLEMENTED }
+
+        size_t TotalNumberOfSweepsSeen() const override { NOT_IMPLEMENTED }
+
     protected:
         DistributedLearner(DistributedCommunicatorPtr communicator, LearnerPtr learner, size_t distributeAfterSamples)
-            : Learner(learner? learner->Parameters() : std::vector<Parameter>(),
-                      LearningRateSchedule(0)),
-              m_learner(learner),
+              : m_learner(learner),
               m_communicator(communicator),
-              m_distributeAfterSamples(distributeAfterSamples)
+              m_distributeAfterSamples(distributeAfterSamples),
+              m_sampleCount(0)
         {
             if (!m_learner)
                 InvalidArgument("Learner passed to a Distributed learner ctor must not be null.");
@@ -5307,6 +5385,9 @@ namespace CNTK
         const LearnerPtr m_learner;
         const DistributedCommunicatorPtr m_communicator;
         const size_t m_distributeAfterSamples;
+
+        size_t m_sampleCount;
+        mutable std::unordered_set<ProgressWriterPtr> m_progressWriters;
 
         // Disallow copy and move construction and assignment
         DistributedLearner(const DistributedLearner&) = delete; DistributedLearner& operator=(const DistributedLearner&) = delete; DistributedLearner& operator=(DistributedLearner&&) = delete; DistributedLearner(DistributedLearner&&) = delete;
