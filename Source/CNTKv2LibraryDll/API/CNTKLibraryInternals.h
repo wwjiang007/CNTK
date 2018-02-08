@@ -187,6 +187,9 @@ namespace CNTK
     class Learner;
     typedef std::shared_ptr<Learner> LearnerPtr;
 
+    class LocalLearner;
+    typedef std::shared_ptr<LocalLearner> LocalLearnerPtr;
+
     class Learners;
     typedef std::shared_ptr<Learners> LearnersPtr;
 

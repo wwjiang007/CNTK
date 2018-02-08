@@ -128,6 +128,7 @@ SWIG_STD_VECTOR_ENHANCED(CNTK::Learner)
 %shared_ptr(CNTK::Value);
 %shared_ptr(CNTK::ProgressWriter);
 %shared_ptr(CNTK::Learner);
+%shared_ptr(CNTK::LocalLearner);
 %shared_ptr(CNTK::DistributedLearner);
 %shared_ptr(CNTK::Trainer);
 %shared_ptr(CNTK::MinibatchSource);
@@ -226,8 +227,8 @@ IGNORE_FUNCTION CNTK::DefaultUnitGainValue;
 IGNORE_FUNCTION CNTK::SetDefaultUnitGainValue;
 IGNORE_FUNCTION CNTK::NesterovLearner;
 IGNORE_VARIABLE CNTK::DefaultVarianceMomentum;
-
 IGNORE_FUNCTION CNTK::Learner::GetOptions;
+IGNORE_FUNCTION CNTK::LocalLearner::GetOptions;
 
 IGNORE_FUNCTION CNTK::UniversalLearner;
 IGNORE_FUNCTION CNTK::Internal::UniversalLearner;

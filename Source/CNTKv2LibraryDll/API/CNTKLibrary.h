@@ -5020,7 +5020,7 @@ namespace CNTK
         ///
         virtual void ResetSmoothedGradients() = 0;
 
-        CNTK_API virtual Dictionary& GetOptions() =0 ;
+        CNTK_API virtual Dictionary& GetOptions() = 0 ;
         CNTK_API virtual const Dictionary& GetOptions() const = 0;
 
         ///In the literature, usually the learner hyper-parameters, such as the learning rates and other hyper-parameters (such as those 
