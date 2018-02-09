@@ -15,6 +15,8 @@ namespace ONNXIR
 
 namespace CNTK
 {
+    const size_t NDShape::FreeDimension;
+
     namespace ONNX 
     {
         enum class ConvAutoPadType 
