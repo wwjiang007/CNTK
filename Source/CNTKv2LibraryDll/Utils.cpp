@@ -1128,6 +1128,7 @@ namespace CNTK
         std::vector<MinibatchInfo> mbInfoPerLearner;
         mbInfoPerLearner.resize(m_learners.size());
 
+        size_t maxNumSamplesSeen = 0;
         bool anyUpdatesPerformed = false;
         for (size_t i = 0; i < m_learners.size(); i++)
         {
@@ -1140,20 +1141,23 @@ namespace CNTK
             std::unordered_map<Parameter, NDArrayViewPtr> learnerGradients;
             GetLearnerGradients(learner, gradientValues, learnerGradients);
             anyUpdatesPerformed |= learner->Update(learnerGradients, mbInfoPerLearner[i]);
+            if (mbInfoPerLearner[i].numberOfSamples > maxNumSamplesSeen) 
+            {
+                maxNumSamplesSeen = mbInfoPerLearner[i].numberOfSamples;
+            }
+            // block momentum could be updating this differently. That is the reason, learn how it update.
+            // can we use max?
+        }
+
+        // In a single trainer, the number of samples should be same for each learner. 
+        // For block momentum we don't get the sample count with each minibatch, so use the
+        // maximum observed by others. 
+        for (size_t i = 0; i < m_learners.size(); i++)
+        {
+            mbInfoPerLearner[i].numberOfSamples = maxNumSamplesSeen;
         }
 
         minibatch = mbInfoPerLearner.front();
-
-        // Checking that progress on the global timeline performed equally.
-        // This will currently prohibit usage of BlockMomentum with Simple/1Bit,
-        // but 1Bit and Simple can be used together.
-        for (size_t i = 1; i < mbInfoPerLearner.size(); i++)
-        {
-            auto mbInfo = mbInfoPerLearner[i];
-            if (minibatch.numberOfSamples != mbInfo.numberOfSamples)
-                RuntimeError("Combining distributed learners with different methods"
-                    " for aggregation minibatch sample count is currently not supported");
-        }
         return anyUpdatesPerformed;
     }
 
