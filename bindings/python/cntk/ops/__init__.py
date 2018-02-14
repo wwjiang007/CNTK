@@ -3913,3 +3913,47 @@ def cast(node_input, dtype, name=''):
     arg_node_input = sanitize_input(node_input, get_data_type(node_input))
     arg_dtype = sanitize_dtype_cntk(dtype)
     return cast(arg_node_input, arg_dtype, name)
+
+@typemap
+def mean_variance_normalization(operand, use_stats_across_channels = False, do_variance_scaling = True, epsilon = 0.00001, name=''):
+    '''
+    Computes mean-variance normalization of the specified input operand. 
+
+    This operation computes and mean and variance for the entire tensor if use_stats_across_channels is True. 
+    If use_stats_across_channels is False the computes mean and variance per channel and normalizes each 
+    channel with its own mean and variance. If do_variance_scaling is False, only the mean is subtracted,
+    and the variance scaling is omitted.
+    
+    Example:
+        >>> data = np.array([[[0., 2], [4., 6.]], [[0., 4], [8., 12.]]]).astype(np.float32)
+        >>> data
+        array([[[  0.,   2.],
+                [  4.,   6.]],
+        <BLANKLINE>
+               [[  0.,   4.],
+                [  8.,  12.]]], dtype=float32)
+        >>> C.mean_variance_normalization(data).eval()
+        array([[[-1.34163487, -0.44721162],
+                [ 0.44721162,  1.34163487]],
+        <BLANKLINE>
+               [[-1.34163785, -0.44721264],
+                [ 0.44721264,  1.34163785]]], dtype=float32)
+
+    Args:
+        operand: Input tensor, with dimensions :math:`[C \\times H \\times W]`.
+        use_stats_across_channels (bool): If False, mean and variance are computed per channel.
+         If True, mean and variance are computed over the entire tensor (all axes).
+        do_variance_scaling (bool): If False, only the mean is subtracted. If True, it is also
+         scaled by inverse of standard deviation.
+        epsilon (float): (Default value: 0.00001) epsilon added to the standard deviation to 
+         avoid division by 0
+        name (str, optional): the name of the Function instance in the network
+    Returns:
+        :class:`~cntk.ops.functions.Function`
+    
+    '''
+    from cntk.cntk_py import mean_variance_normalization
+    operand = sanitize_input(operand, get_data_type(operand))
+    if epsilon < 0.0:
+        raise ValueError('epsilon must be >= 0.')    
+    return mean_variance_normalization(operand, use_stats_across_channels, do_variance_scaling, epsilon, name)
