@@ -464,7 +464,6 @@ def test_auto_broadcast_reconcile_issue():
     assert inputs[0].name == 'y' and inputs[1].name == 'x'
 
 MEAN_VARIANCE_NORMALIZATION_DATA = [
-    # 2D Convolution.
     (np.array([[[0., 2],     # Input tensor
                 [4., 6.]],
                [[0., 4],
