@@ -1145,8 +1145,6 @@ namespace CNTK
             {
                 maxNumSamplesSeen = mbInfoPerLearner[i].numberOfSamples;
             }
-            // block momentum could be updating this differently. That is the reason, learn how it update.
-            // can we use max?
         }
 
         // In a single trainer, the number of samples should be same for each learner. 
