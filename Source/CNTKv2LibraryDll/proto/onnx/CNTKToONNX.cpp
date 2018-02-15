@@ -1278,6 +1278,13 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
             node->AddAttribute("scale", scale);
             node->AddAttribute("bias", biases);
         }
+        else if (src->OpName() == L"MeanVarianceNormalization")
+        {
+            auto useStatsAcrossChannels = (int64_t)(src->Attributes()[L"useStatsAcrossChannels"].Value<bool>());
+            auto doVarianceScaling = (int64_t)(src->Attributes()[L"doVarianceScaling"].Value<bool>());
+            node->AddAttribute(attributesMap[L"useStatsAcrossChannels"], useStatsAcrossChannels);
+            node->AddAttribute(attributesMap[L"doVarianceScaling"], doVarianceScaling);
+        }
     }
     else
     {

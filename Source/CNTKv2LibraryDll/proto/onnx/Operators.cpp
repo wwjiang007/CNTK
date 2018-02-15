@@ -359,6 +359,11 @@ namespace ONNX
         { L"ImageScaler",{ {
             { L"ImageScaler", "ImageScaler" },
             } } },
+        { L"MeanVarianceNormalization",{ {
+            { L"MeanVarianceNormalization", "MeanVarianceNormalization" },
+            { L"useStatsAcrossChannels", "across_channels" },
+            { L"doVarianceScaling", "normalize_variance" },
+            } } },
     };
 
     // given a cntkOpName and cntk attribute OpName which is saved in CNTK::Function's attribute,

@@ -2374,8 +2374,12 @@ namespace CNTK
         return AsBlock(std::move(ElementTimes(Minus(operandPlaceholder, meanPlaceholder), invStdDevPlaceholder)), { { operandPlaceholder, operand },{ meanPlaceholder, mean },{ invStdDevPlaceholder, invStdDev } }, L"PerDimMeanVarianceNormalize", name);
     }
 
-    FunctionPtr MeanVarianceNormalization(const Variable& operand, const bool useStatsAcrossChannels, const bool doVarianceScaling, const float epsilon, const std::wstring& name)
+    FunctionPtr MeanVarianceNormalization(const Variable& operand, const bool useStatsAcrossChannels, const bool doVarianceScaling, const std::wstring& name)
     {
+        Dictionary additionalAttributes;
+        additionalAttributes[PrimitiveFunction::AttributeNameUseStatsAcrossChannels] = useStatsAcrossChannels;
+        additionalAttributes[PrimitiveFunction::AttributeNameDoVarianceScaling] = doVarianceScaling;
+
         auto operandPlaceholder = PlaceholderVariable(L"operand");
         size_t operandRank = operand.Shape().Rank();
         if (operandRank < 2 && !useStatsAcrossChannels)
@@ -2387,12 +2391,12 @@ namespace CNTK
         FunctionPtr operandMeanRemoved = Minus(operandPlaceholder, ReduceMean(operandPlaceholder, axesToReduce));
         if (!doVarianceScaling)
         {
-            return AsBlock(std::move(operandMeanRemoved), { { operandPlaceholder, operand } }, L"MeanVarianceNormalization", name);
+            return AsBlock(std::move(operandMeanRemoved), { { operandPlaceholder, operand } }, std::move(additionalAttributes), L"MeanVarianceNormalization", name);
         }
         else
         {
-            auto stdDev = Plus(Sqrt(ReduceMean(Square(operandMeanRemoved), axesToReduce)), Constant::Scalar(operandPlaceholder.GetDataType(), epsilon));
-            return AsBlock(std::move(ElementDivide(operandMeanRemoved, stdDev)), { { operandPlaceholder, operand } }, L"MeanVarianceNormalization", name);
+            return AsBlock(std::move(ElementDivide(operandMeanRemoved, Sqrt(ReduceMean(Square(operandMeanRemoved), axesToReduce)))),
+                { { operandPlaceholder, operand } }, std::move(additionalAttributes), L"MeanVarianceNormalization", name);
         }
     }
 

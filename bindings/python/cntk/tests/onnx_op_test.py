@@ -538,6 +538,22 @@ def test_Mean(tmpdir):
 
     verify_two_input(model, in1_data, in2_data, tmpdir, 'Mean_2')
     
+#MeanVarianceNormalization
+def test_MeanVarianceNormalization(tmpdir):
+    shape = (3, 5, 7)
+    data = np.reshape(np.arange(np.prod(shape), dtype = np.float32), shape)
+
+    input_operand = C.input_variable(shape=shape)
+    
+    # model0 = C.mean_variance_normalization(input_operand, use_stats_across_channels=False, do_variance_scaling=True)
+    # verify_one_input(model0, data, tmpdir, 'Pad_0')
+
+    model1 = C.mean_variance_normalization(input_operand, use_stats_across_channels=False, do_variance_scaling=False)
+    verify_one_input(model1, data, tmpdir, 'Pad_1')
+
+    # model2 = C.mean_variance_normalization(input_operand, use_stats_across_channels=True, do_variance_scaling=True)
+    # verify_one_input(model2, data, tmpdir, 'Pad_2')
+
 #Min
 def test_Min(tmpdir):
     data0 = np.asarray([1., 1., 1., 1.], dtype=np.float32)
@@ -569,7 +585,7 @@ def test_Pad(tmpdir):
     x = C.input_variable(shape)
     model = C.pad(x, pattern=[(1,1),(2,2)], mode=C.ops.REFLECT_PAD)
 
-    verify_one_input(model, data, tmpdir, 'Pad_1')    
+    verify_one_input(model, data, tmpdir, 'Pad_1')
 
 #PRelu
 #def test_PRelu(tmpdir):

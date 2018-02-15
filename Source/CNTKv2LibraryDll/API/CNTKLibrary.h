@@ -4508,8 +4508,7 @@ namespace CNTK
     ///
     /// Mean-variance normalization of the specified input operand.
     ///
-    CNTK_API FunctionPtr MeanVarianceNormalization(const Variable& operand, const bool useStatsAcrossChannels = false, const bool doVarianceScaling = true,
-        const float epsilon = 0.00001f, const std::wstring& name = L"");
+    CNTK_API FunctionPtr MeanVarianceNormalization(const Variable& operand, const bool useStatsAcrossChannels = false, const bool doVarianceScaling = true, const std::wstring& name = L"");
 
     ///
     /// Per dimension mean-variance normalization of the specified input operand.
