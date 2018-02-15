@@ -545,14 +545,14 @@ def test_MeanVarianceNormalization(tmpdir):
 
     input_operand = C.input_variable(shape=shape)
     
-    # model0 = C.mean_variance_normalization(input_operand, use_stats_across_channels=False, do_variance_scaling=True)
-    # verify_one_input(model0, data, tmpdir, 'Pad_0')
+    model0 = C.mean_variance_normalization(input_operand, use_stats_across_channels=False, do_variance_scaling=True)
+    verify_one_input(model0, data, tmpdir, 'Pad_0')
 
     model1 = C.mean_variance_normalization(input_operand, use_stats_across_channels=False, do_variance_scaling=False)
     verify_one_input(model1, data, tmpdir, 'Pad_1')
 
-    # model2 = C.mean_variance_normalization(input_operand, use_stats_across_channels=True, do_variance_scaling=True)
-    # verify_one_input(model2, data, tmpdir, 'Pad_2')
+    model2 = C.mean_variance_normalization(input_operand, use_stats_across_channels=True, do_variance_scaling=True)
+    verify_one_input(model2, data, tmpdir, 'Pad_2')
 
 #Min
 def test_Min(tmpdir):
