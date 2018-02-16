@@ -190,6 +190,9 @@
     <ClInclude Include="API\CNTKLibraryC.h">
       <Filter>API</Filter>
     </ClInclude>
+    <ClInclude Include="proto\onnx\RNNHelper.h">
+      <Filter>proto\onnx</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="API">
