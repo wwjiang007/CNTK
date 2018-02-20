@@ -1068,9 +1068,9 @@ namespace CNTK
             if (distLearner)
             {
                 m_isDistributed = true;
-                
-                // If this is the only learner, set it as the MetricAggregator so that the user
-                // does not need to explicitly mark it.
+
+                // If this is the only learner, set it as the MetricAggregator
+                // so that the user does not need to explicitly mark it.
                 if (m_learners.size() == 1)
                 {
                     distLearner->SetAsMetricAggregator();
@@ -1165,7 +1165,6 @@ namespace CNTK
         for (size_t i = 0; i < m_learners.size(); i++)
         {
             auto l  = m_learners[i];
-
             auto learner = dynamic_pointer_cast<DistributedLearner>(l);
             assert(learner != nullptr); // Already checked in the constructor.
 
@@ -1186,15 +1185,11 @@ namespace CNTK
         assert(metricAggregatorUpdated);
 
         // In a single trainer, the number of samples should be same for each learner. 
-        // For block momentum we don't get the sample count with each minibatch, so use the
-        // maximum observed by others. 
+        // We use the learner marked as MetricAggregator to set the number of samples. 
         for (size_t i = 0; i < m_learners.size(); i++)
         {
             mbInfoPerLearner[i].numberOfSamples = minibatch.numberOfSamples;
         }
-
-        //minibatch = mbInfoPerLearner.front();
-        //minibatch = tmpMinibatch;
         return anyUpdatesPerformed;
     }
 
