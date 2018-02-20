@@ -1180,9 +1180,10 @@ namespace CNTK
 
             std::unordered_map<Parameter, NDArrayViewPtr> learnerGradients;
             GetLearnerGradients(learner, gradientValues, learnerGradients);
-            anyUpdatesPerformed |= learner->Update(learnerGradients, mbInfoPerLearner[i]);            
+            anyUpdatesPerformed |= learner->Update(learnerGradients, mbInfoPerLearner[i]);
         }
-        assert(metricAggregatorUpdated);
+        if (!metricAggregatorUpdated)
+            RuntimeError("Update failed: Metric aggregation did not happen, none of the learners was marked as metric aggregator.");
 
         // In a single trainer, the number of samples should be same for each learner. 
         // We use the learner marked as MetricAggregator to set the number of samples. 
