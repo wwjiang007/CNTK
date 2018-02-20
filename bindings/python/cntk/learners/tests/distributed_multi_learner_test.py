@@ -130,7 +130,7 @@ def test_multi_learner_bmuf_correct_metrics_averaging(tmpdir, device_id, mb_sour
     launch_args += ["--checkpointdir", str(tmpdir.join('checkpoint'))]
 
     ret_str = mpiexec_execute(__file__, ['-n', str(NUM_WORKERS), '-l'], launch_args)
-    print(ret_str)    
+    #print(ret_str)    
 
     loss_perepoch_perworker = {i:{} for i in range(NUM_WORKERS)}
     for match in re.finditer(regex_pattern, ret_str):
