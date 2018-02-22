@@ -1273,7 +1273,8 @@ void CNTKToONNXHelper::PrepareInput(const Variable &X, std::vector<ONNXIR::NodeA
     
     // TODO: figure out how to handdle sequence dimension.
     if (ToString(input.Uid()).find("Input") != -1 && !input.IsConstant() && !input.IsOutput())
-        (*inputArgType.mutable_tensor_type()->mutable_shape()->mutable_dim())[0].set_dim_value(SequenceLen);
+        // (*inputArgType.mutable_tensor_type()->mutable_shape()->mutable_dim())[0].set_dim_value(SequenceLen);
+        (*inputArgType.mutable_tensor_type()->mutable_shape()->mutable_dim())[0].set_dim_param("None");
 
     UpdateONNXType(input.GetDataType(), inputArgType);
     ONNXIR::NodeArg inputArg(inputName, &inputArgType);
@@ -1645,7 +1646,9 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
 
     // squeeze direction axis out. This is safe because it is not bi-directional node.
     // TODO: sequence and batch size
-    std::vector<int> shape({ SequenceLen, 1, hidden_size });
+
+    std::vector<int> shape({ 0, 1, hidden_size });
+    // std::vector<int> shape({ SequenceLen, 1, hidden_size });
 
     ONNXIR::Node *squeezedLSTMNode = AddReshapeNodeToCNTKFunction(src, lstmNode, shape, graph);
 
@@ -1869,7 +1872,8 @@ ONNXIR::Node* CNTKToONNXHelper::CreateNode(const FunctionPtr& src,
                 else
                     inputArgType = ToTypeProto(input.Shape(), input.HasBatchAxis(), HasSequenceAxis(input));
                 if (ToString(input.Uid()).find("Input") != -1 && !isConstant && !input.IsOutput())
-                    (*inputArgType.mutable_tensor_type()->mutable_shape()->mutable_dim())[0].set_dim_value(SequenceLen);
+                    // (*inputArgType.mutable_tensor_type()->mutable_shape()->mutable_dim())[0].set_dim_value(SequenceLen);
+                    (*inputArgType.mutable_tensor_type()->mutable_shape()->mutable_dim())[0].set_dim_param("None");
             }
 
             UpdateONNXType(input.GetDataType(), inputArgType);
@@ -2527,7 +2531,8 @@ ONNXIR::Node* CNTKToONNXHelper::AddNode(const FunctionPtr& src, ONNXIR::Graph* g
             ONNXIR::NodeArg reshapeInputNodeArg(gatherNode->OutputDefs()[0].Name(), nullptr);
             ONNXIR::Node* reshapedGather = graph->AddNode(nodeName, "Reshape", "", { reshapeInputNodeArg }, outputs);
             int input_size = src->Output().Shape()[0];
-            std::vector<int> newShape({ SequenceLen, 1, input_size });
+            // std::vector<int> newShape({ SequenceLen, 1, input_size });
+            std::vector<int> newShape({ 0, 1, input_size });
             reshapedGather->AddAttribute("shape", ToINTS(newShape, false));
             return reshapedGather;
         }
@@ -2588,7 +2593,9 @@ ONNXIR::Node* CNTKToONNXHelper::AddNode(const FunctionPtr& src, ONNXIR::Graph* g
                     ONNXIR::NodeArg inputOutput1Arg(orderedInputs[0].Name() + string("_reshape1"), nullptr);
                     {
                         auto reshapeNode1 = graph->AddNode(nodeName + string("_reshape1"), "Reshape", "", { orderedInputs[0] }, { inputOutput1Arg });
-                        (const_cast<TensorShapeProto*>(input1Shape))->mutable_dim(0)->set_dim_value(SequenceLen);
+                        // (const_cast<TensorShapeProto*>(input1Shape))->mutable_dim(0)->set_dim_value(SequenceLen);
+                        (const_cast<TensorShapeProto*>(input1Shape))->mutable_dim(0)->set_dim_value(0);
+
                         onnx::TypeProto reshapeTypeProto1 = TensorShapeProtoToTypeProto(input1Shape);
                         reshapeNode1->AddAttribute("shape", ToINTS(reshapeTypeProto1));
                     }
