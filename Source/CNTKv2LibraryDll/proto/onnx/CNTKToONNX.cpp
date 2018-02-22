@@ -13,10 +13,13 @@
 #include "BlockFunction.h"
 #include <vector>
 #include <tuple>
+#include <numeric>
 
 using namespace CNTK::ONNX;
 using namespace CNTK;
 
+// TODO: hardcoded sequnce length
+const int SequenceLen = 20;
 onnx::TypeProto TensorShapeProtoToTypeProto(const onnx::TensorShapeProto* inputShape)
 {
     onnx::TypeProto newShape;
@@ -90,6 +93,9 @@ namespace CNTK
             std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
             const std::unordered_map<Variable, Variable>& compositeOutputsMap);
 
+        static ONNXIR::Node *AddArgMaxNode(const ONNXIR::NodeArg &nodeArg, ONNXIR::Graph* graph);
+        static ONNXIR::Node *AddCastNode(const ONNXIR::NodeArg &nodeArg, ONNXIR::Graph* graph);
+        static ONNXIR::Node *AddReshapeNodeToCNTKFunction(const FunctionPtr &src, ONNXIR::Node* node, const std::vector<int> &shape, ONNXIR::Graph* graph);
         static ONNXIR::Node* CreateLSTMRecurrenceNode(ONNXIR::Graph* graph, const std::string &nodeName);
 
         static ONNXIR::Node* CreateOptimizedRNNStackNode(const FunctionPtr& src,
@@ -103,12 +109,10 @@ namespace CNTK
             std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
             const std::unordered_map<Variable, Variable>& compositeOutputsMap);
         static void PrepareInput(const Variable &X, std::vector<ONNXIR::NodeArg> &nodeInputs);
-        //static void PrepareInitialState(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
-        //    const std::vector<Variable> &initialVariables, int batchSize, int cellSize, 
-        //    const std::string &uid, std::vector<ONNXIR::NodeArg> &nodeInputs);
+        static void PrepareInitialState(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
+            const std::vector<Variable> &initialVariables, int batchSize, int cellSize, 
+            const std::string &uid, std::vector<ONNXIR::NodeArg> &nodeInputs);
 
-        static void PrepareWeightNodeWithScalar(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
-            const std::vector<int> dims, float value, const std::string &uid, std::vector<ONNXIR::NodeArg> &nodeInputs);
         //static void PrepareWeightNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
         //    const std::vector<Variable> &Ws, std::vector<ONNXIR::NodeArg> &nodeInputs, int r, int c);
         static void PrepareWeightNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
@@ -133,12 +137,10 @@ namespace CNTK
         // Copy the content of NDArrayView to TensorProto, and do the needed
         // convergence.
         //
-        static void CopyTensor(const NDArrayViewPtr src, onnx::TensorProto& dst, onnx::TypeProto *inputArgType = nullptr,
-            bool transpose = false);
-        static void CopyTensorRC(const NDArrayViewPtr src, onnx::TensorProto& dst, onnx::TypeProto *inputArgType /*=nullptr*/,
-            int r, int c);
+        static void CopyTensor(const NDArrayViewPtr src, onnx::TensorProto& dst, onnx::TypeProto *inputArgType = nullptr);
+        static void FillTensorWithScalar(const std::vector<NDArrayViewPtr>& src, onnx::TensorProto& dst, const std::vector<int> dstShape);
 
-        static void CopyTensors(const std::vector<NDArrayViewPtr> &src, float *stabilizerConstants,
+        static void CopyTensorsWithCNTKToONNXLSTMWeightLayoutConversion(const std::vector<NDArrayViewPtr> &src, float *stabilizerConstants,
             onnx::TensorProto& dst, onnx::TypeProto *inputArgType /*=nullptr*/);
         //
         // Copy supported attributes from CNTK node to corresponding ONNX node.
@@ -214,6 +216,8 @@ namespace CNTK
         // Argument orders between CNTK and ONNX aren't always the same.
         //
         static std::vector<ONNXIR::NodeArg> MapInputsOrderToONNX(const FunctionPtr& src, const std::vector<ONNXIR::NodeArg>& inputs);
+
+        static std::vector<int> GetVariableONNXShape(const Variable &operand);
 
         //
         // Add current CNTK node to ONNX graph.
@@ -419,7 +423,7 @@ void AppendCNTKWeightToONNXTensor(DType *data, const NDShape &shape, onnx::Tenso
     }
 }
 
-void CNTKToONNXHelper::CopyTensors(const std::vector<NDArrayViewPtr> &src, float *stabilizerConstants,
+void CNTKToONNXHelper::CopyTensorsWithCNTKToONNXLSTMWeightLayoutConversion(const std::vector<NDArrayViewPtr> &src, float *stabilizerConstants,
     onnx::TensorProto& dst, onnx::TypeProto *inputArgType /*=nullptr*/)
 {
     // TODO: all NDArrayViewPtr shall have the same shape and data types.
@@ -487,10 +491,7 @@ void CNTKToONNXHelper::CopyTensors(const std::vector<NDArrayViewPtr> &src, float
     }
 }
 
-#pragma warning(disable: 4189)
-
-void CNTKToONNXHelper::CopyTensor(const NDArrayViewPtr src, onnx::TensorProto& dst, onnx::TypeProto *inputArgType /*=nullptr*/,
-    bool transpose)
+void CNTKToONNXHelper::CopyTensor(const NDArrayViewPtr src, onnx::TensorProto& dst, onnx::TypeProto *inputArgType /*=nullptr*/)
 {
     auto dataType = src->GetDataType();
     auto srcTemp = src->DeepClone();
@@ -506,48 +507,9 @@ void CNTKToONNXHelper::CopyTensor(const NDArrayViewPtr src, onnx::TensorProto& d
     {
         dst.set_data_type(onnx::TensorProto_DataType_FLOAT);
         auto data = srcTemp->DataBuffer<float>();
-        for (size_t targetIndex = 0; targetIndex < totalSize; targetIndex++)
-        {
-            if (transpose)
-            {
-                int cell_size = srcShape[0] / 4;
-                int input_size = srcShape[1];
-
-                bool rowMajor = true;
-                int row, col;
-                if (rowMajor)
-                {
-                    // row major layout
-                    row = targetIndex / input_size;
-                    col = targetIndex % input_size;
-                }
-                else
-                {
-                    row = targetIndex % (cell_size * 4);
-                    col = targetIndex / (cell_size * 4);
-                }
-
-                // TODO: specific to LSTM. icfo (CNTK) to iofc(ONNX)
-                int block = row / cell_size;
-                if (block == 1)
-                {
-                    // c
-                    row += 2 * cell_size;
-                }
-                else if (block == 3)
-                {
-                    // o
-                    row -= 2 * cell_size;
-                }
-
-                // soruce is collum major
-                int src_index = 4 * cell_size * col + row;
-                *(dst.mutable_float_data()->Add()) = data[src_index];
-            }
-            else
-            {
-                *(dst.mutable_float_data()->Add()) = data[targetIndex];
-            }
+        for (size_t index = 0; index < totalSize; index++)
+        { 
+            *(dst.mutable_float_data()->Add()) = data[index];
         }
 
         break;
@@ -961,8 +923,6 @@ std::tuple<std::pair<std::vector<int>, std::vector<int>>, bool, int, bool> CNTKT
         dims2.insert(dims2.begin(), 1);
     }
 
-
-    std::vector<int> broadcastShape;
     bool swapInputDueToDims;
     std::tie<std::vector<int>, bool, int>(dims2, broadcast, axis, swapInputDueToDims) = CalculateBroadcastAxis(dims1, dims2);
 
@@ -1310,98 +1270,55 @@ void CNTKToONNXHelper::PrepareInput(const Variable &X, std::vector<ONNXIR::NodeA
 
     std::string inputName = ToString(input.Uid());
     onnx::TypeProto inputArgType = ToTypeProto(input.Shape(), (int)(input.DynamicAxes().size()));
+    
+    // TODO: figure out how to handdle sequence dimension.
+    if (ToString(input.Uid()).find("Input") != -1 && !input.IsConstant() && !input.IsOutput())
+        (*inputArgType.mutable_tensor_type()->mutable_shape()->mutable_dim())[0].set_dim_value(SequenceLen);
+
     UpdateONNXType(input.GetDataType(), inputArgType);
     ONNXIR::NodeArg inputArg(inputName, &inputArgType);
     nodeInputs.push_back(inputArg);
 }
 
-//void CNTKToONNXHelper::PrepareInitialState(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
-//    const std::vector<Variable> &initialVariables, int batchSize, int cellSize, 
-//    const std::string &uid, std::vector<ONNXIR::NodeArg> &nodeInputs)
-//{
-//    std::vector<int> shape = Cast<size_t, int>((NDShape({ Bs.size() }).AppendShape(Bs[0].Shape())).Dimensions());
-//    shape[1] *= 2;
-//    onnx::TypeProto inputArgType = ToTypeProto(shape, doReverseVec);
-//    UpdateONNXType(Bs[0].GetDataType(), inputArgType);
-//    ONNXIR::NodeArg inputArg(ToString(Bs[0].Uid()), &inputArgType);
-//    std::vector<ONNXIR::NodeArg> varOutputs({ inputArg });
-//    std::vector<ONNXIR::NodeArg> varInputs;
-//    std::string inputName = inputArg.Name();
-//    ONNXIR::Node* variableNode = graph->AddNode(inputName, "Constant", "", varInputs, varOutputs);
-//
-//    std::vector<NDArrayViewPtr> srcTensors;
-//    for (int i = 0; i < Bs.size(); i++)
-//    {
-//        const Variable &variable = Bs[i];
-//        srcTensors.push_back(variable.IsParameter() ? Parameter(variable).Value() : Constant(variable).Value());
-//    }
-//
-//    onnx::TensorProto dstTensor;
-//
-//    CopyTensors(srcTensors, nullptr, dstTensor, &inputArgType);
-//    variableNode->AddAttribute("value", dstTensor);
-//    nodeInputs.push_back(inputArg);
-//
-//    // TODO:
-//    variableNodes.emplace(Bs[0], variableNode);
-//}
-
-void CNTKToONNXHelper::PrepareWeightNodeWithScalar(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
-    const std::vector<int> dims, float value, const std::string &uid, std::vector<ONNXIR::NodeArg> &nodeInputs)
+void CNTKToONNXHelper::PrepareInitialState(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
+    const std::vector<Variable> &initialVariables, int batchSize, int cellSize, 
+    const std::string &uid, std::vector<ONNXIR::NodeArg> &nodeInputs)
 {
-    onnx::TypeProto inputArgType = ToTypeProto(dims, false);
-    UpdateONNXType(DataType::Float, inputArgType);
+    std::vector<int> shape({ (int)initialVariables.size(), batchSize , cellSize });
+    bool doReverseVec = false;
+    onnx::TypeProto inputArgType = ToTypeProto(shape, doReverseVec);
+    UpdateONNXType(initialVariables[0].GetDataType(), inputArgType);
     ONNXIR::NodeArg inputArg(uid, &inputArgType);
-
-    std::string inputName = inputArg.Name();
-
+    std::vector<ONNXIR::NodeArg> varOutputs({ inputArg });
     std::vector<ONNXIR::NodeArg> varInputs;
-    std::vector<ONNXIR::NodeArg> varOutputs;
-
-    varOutputs.push_back({ inputArg });
+    std::string inputName = inputArg.Name();
     ONNXIR::Node* variableNode = graph->AddNode(inputName, "Constant", "", varInputs, varOutputs);
 
-    NDArrayViewPtr srcTensor(new NDArrayView(value, NDShape(Cast<int, size_t>(dims))));
+    std::vector<NDArrayViewPtr> srcTensors;
+    for (int i = 0; i < initialVariables.size(); i++)
+    {
+        const Variable &variable = initialVariables[i];
+        auto srcTensor = variable.IsParameter() ? Parameter(variable).Value() : Constant(variable).Value();
+        if (srcTensor->Shape().Rank() == 0 || srcTensor->Shape().TotalSize() == 1)
+        {
+            srcTensors.push_back(srcTensor);
+        }
+        else
+        {
+            // TODO:
+            NOT_IMPLEMENTED;
+        }
+    }
+
     onnx::TensorProto dstTensor;
-    CopyTensor(srcTensor, dstTensor, &inputArgType);
+    FillTensorWithScalar(srcTensors, dstTensor, shape);
 
     variableNode->AddAttribute("value", dstTensor);
-
     nodeInputs.push_back(inputArg);
 
-    // variableNodes.emplace(Ws[0], variableNode);
+    // TODO:
+    variableNodes.emplace(initialVariables[0], variableNode);
 }
-
-//void CNTKToONNXHelper::PrepareWeightNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
-//    const std::vector<Variable> &Ws, std::vector<ONNXIR::NodeArg> &nodeInputs)
-//{
-//    const Variable &W = Ws[0];
-//    std::vector<int> dim = Cast<size_t, int>((NDShape({ Ws.size() }).AppendShape(W.Shape())).Dimensions());
-//    onnx::TypeProto inputArgType = ToTypeProto(dim, false);
-//
-//    UpdateONNXType(W.GetDataType(), inputArgType);
-//    ONNXIR::NodeArg inputArg(ToString(W.Uid()), &inputArgType);
-//
-//    std::string inputName = inputArg.Name();
-//
-//    std::vector<ONNXIR::NodeArg> varInputs;
-//    std::vector<ONNXIR::NodeArg> varOutputs;
-//
-//    varOutputs.push_back({ inputArg });
-//    ONNXIR::Node* variableNode = graph->AddNode(inputName, "Constant", "", varInputs, varOutputs);
-//
-//    const NDArrayViewPtr srcTensor = W.IsParameter() ? Parameter(W).Value() : Constant(W).Value();
-//    onnx::TensorProto dstTensor;
-//
-//    CopyTensor(srcTensor, dstTensor, &inputArgType, true);
-//    // CopyTensorRC(srcTensor, dstTensor, &inputArgType, r, c);
-//
-//    variableNode->AddAttribute("value", dstTensor);
-//
-//    nodeInputs.push_back(inputArg);
-//
-//    variableNodes.emplace(Ws[0], variableNode);
-//}
 
 void CNTKToONNXHelper::PrepareBiasNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
     const std::vector<Variable> &Bs, std::vector<ONNXIR::NodeArg> &nodeInputs)
@@ -1432,7 +1349,7 @@ void CNTKToONNXHelper::PrepareBiasNode(ONNXIR::Graph* graph, std::unordered_map<
 
     onnx::TensorProto dstTensor;
 
-    CopyTensors(srcTensors, nullptr, dstTensor, &inputArgType);
+    CopyTensorsWithCNTKToONNXLSTMWeightLayoutConversion(srcTensors, nullptr, dstTensor, &inputArgType);
     variableNode->AddAttribute("value", dstTensor);
     nodeInputs.push_back(inputArg);
 
@@ -1468,7 +1385,7 @@ void CNTKToONNXHelper::PrepareWeightNode(ONNXIR::Graph* graph, std::unordered_ma
 
     onnx::TensorProto dstTensor;
     
-    CopyTensors(srcTensors, stabilizerConstants, dstTensor, &inputArgType);
+    CopyTensorsWithCNTKToONNXLSTMWeightLayoutConversion(srcTensors, stabilizerConstants, dstTensor, &inputArgType);
     variableNode->AddAttribute("value", dstTensor);
     nodeInputs.push_back(inputArg);
 
@@ -1590,7 +1507,14 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
 
     string direction = lstms.size() == 2 ? "bidirectional" : (directionCount[true] == 1 ? "reverse" : "forward");
 
+    // TODO: following commented out attributes are not supported yet. Use default.
     // float clip; // no clip yet
+    // std::vector<float> activation_alpha;    // no supported activation need alpha.
+    // std::vector<float> activation_beta;    // no supported activation need beta.
+    int hidden_size = lstms[0]->Outputs()[0].Shape()[0];
+    int input_forget = 0;
+    int output_sequence = 1;        // always output for CNTK LSTM
+    // Variable P;
 
     // inputs
     std::vector<ONNXIR::NodeArg> nodeInputs;
@@ -1616,7 +1540,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
             nodeInputs.push_back(inputArg);
         }
 
-        bool has_sequence_lens = true;
+        bool has_sequence_lens = false;
         std::string sequence_lens_inputName = "sequence_lens___";
         if (has_sequence_lens)
         {
@@ -1631,15 +1555,16 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
             nodeInputs.push_back(inputArg);
         }
 
-        bool has_initial_h = false; // initialHs[0] != Variable();
+        bool has_initial_h = initialHs[0] != Variable();
         if (has_initial_h)
         {
-            //PrepareInitialState(graph, variableNodes, initialHs, "initial_h___", nodeInputs);
-            //PrepareInitialState(graph, variableNodes, initialCs, "initial_c___", nodeInputs);
-            PrepareWeightNodeWithScalar(graph, variableNodes,
-                std::vector<int>({ 1, 1, 5 }), 0.5F, "initial_h___", nodeInputs);
-            PrepareWeightNodeWithScalar(graph, variableNodes,
-                std::vector<int>({ 1, 1, 5 }), 0.5F, "initial_c___", nodeInputs);
+            // TODO: how to set batchsize
+            int batchSize = 1;
+            std::string hiddenUid = ToString(Yhs[0].Uid()) + "_initial_h";
+            PrepareInitialState(graph, variableNodes, initialHs, batchSize, hidden_size, hiddenUid, nodeInputs);
+
+            std::string cellUid = ToString(Ycs[0].Uid()) + "_initial_c";
+            PrepareInitialState(graph, variableNodes, initialCs, batchSize, hidden_size, cellUid, nodeInputs);
         }
         else
         {
@@ -1653,34 +1578,18 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
             }
         }
 
-        bool has_peephole = false;
-        if (has_peephole)
-        {
-            PrepareWeightNodeWithScalar(graph, variableNodes,
-                std::vector<int>({ 1, 3 * 5 }), 0.7F, "P___", nodeInputs);
-        }
-        else
         {
             ONNXIR::NodeArg inputArg(dummyName + "P___", nullptr);
             nodeInputs.push_back(inputArg);
         }
     }
 
-    float initial_h = 0;    // use default
-    float initial_c = 0;    // use default
-    // std::vector<float> activation_alpha;    // no supported activation need alpha.
-    // std::vector<float> activation_beta;    // no supported activation need beta.
-    int hidden_size = lstms[0]->Outputs()[0].Shape()[0];
-    int input_forget = 0;
-    int output_sequence = 1;        // default
-                                    // Variable P;
-
     std::vector<ONNXIR::NodeArg> nodeOutputs;
     {
         if (output_sequence == 1)
         {
-            // TODO: how to outout the complete sequence of one LSTM layer?
-            // TODO: give the right name otherwise layers cannot be hooked up.
+            // TODO: do these sequence/batch dimensions meta data matter?
+            int sequence_len = 1;
             int batchSize = 1;
             std::string nodeName;
             if (lstms.size() == 1)
@@ -1688,7 +1597,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
             else
                 nodeName = ToString(src->Output().Uid());
 
-            auto outputArgType = ToTypeProto(std::vector<int>({ 3, (int)Yhs.size(), batchSize, (int)Yhs[0].Shape()[0] }), false);
+            auto outputArgType = ToTypeProto(std::vector<int>({ sequence_len, (int)Yhs.size(), batchSize, (int)Yhs[0].Shape()[0] }), false);
             UpdateONNXType(Yhs[0].GetDataType(), outputArgType);
             ONNXIR::NodeArg outputArg(nodeName, &outputArgType);
             nodeOutputs.push_back(outputArg);
@@ -1699,7 +1608,6 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
             nodeOutputs.push_back(outputArg);
         }
 
-        
         {
             Variable Yh = Yhs[0];
             std::string nodeName = ToString(Yh.Uid()) + "_h";
@@ -1725,17 +1633,90 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
         CreateNode(Xs[0].Owner(), graph, functionNodes, variableNodes, compositeOutputsMap);
 
     auto nodeName = src->Name().empty() ? ToString(src->Uid()) : ToString(src->Name());
-    ONNXIR::Node *functionNode = graph->AddNode(nodeName, "LSTM", "", nodeInputs, nodeOutputs);
+    ONNXIR::Node *lstmNode = graph->AddNode(nodeName, "LSTM", "", nodeInputs, nodeOutputs);
 
-    functionNode->AddAttribute("activations", activations);
-    functionNode->AddAttribute("direction", direction);
-    functionNode->AddAttribute("hidden_size", (int64_t)hidden_size);
-    functionNode->AddAttribute("hidden_size", (int64_t)hidden_size);
-    functionNode->AddAttribute("output_sequence", (int64_t)output_sequence);
+    lstmNode->AddAttribute("activations", activations);
+    lstmNode->AddAttribute("direction", direction);
+    lstmNode->AddAttribute("hidden_size", (int64_t)hidden_size);
+    lstmNode->AddAttribute("output_sequence", (int64_t)output_sequence);
     
-    return functionNode;
+    if (lstms.size() == 2)
+        NOT_IMPLEMENTED;
+
+    // squeeze direction axis out. This is safe because it is not bi-directional node.
+    // TODO: sequence and batch size
+    std::vector<int> shape({ SequenceLen, 1, hidden_size });
+
+    ONNXIR::Node *squeezedLSTMNode = AddReshapeNodeToCNTKFunction(src, lstmNode, shape, graph);
+
+    functionNodes.emplace(src, squeezedLSTMNode);
+    return squeezedLSTMNode;
 }
 
+ONNXIR::Node *CNTKToONNXHelper::AddArgMaxNode(const ONNXIR::NodeArg &nodeArg, ONNXIR::Graph* graph)
+{
+    // ONNXIR::NodeArg inputArg(nodeArg.Name(), nullptr);
+    ONNXIR::NodeArg outputArg(nodeArg.Name() + "argmax_out", nullptr);
+    ONNXIR::Node* argMaxNode = graph->AddNode(nodeArg.Name() + string("_argmax"), "ArgMax", "", { nodeArg }, { outputArg });
+    argMaxNode->AddAttribute("axis", (int64_t)2);
+    argMaxNode->AddAttribute("keepdims", (int64_t)1);    
+    return argMaxNode;
+}
+
+ONNXIR::Node *CNTKToONNXHelper::AddCastNode(const ONNXIR::NodeArg &nodeArg, ONNXIR::Graph* graph)
+{
+    // ONNXIR::NodeArg inputArg(nodeArg.Name(), nullptr);
+    ONNXIR::NodeArg outputArg(nodeArg.Name() + "cast_out", nullptr);
+    ONNXIR::Node* castNode = graph->AddNode(nodeArg.Name() + string("_cast"), "Cast", "", { nodeArg }, { outputArg });
+    castNode->AddAttribute("to", "INT32");
+    return castNode;
+}
+
+// This method is to workaround the fact that ONNX spec of LSTM ops does not allow easy layer stacking.
+// Under such circumstance, mapping memory layout from a bidirectional LSTM may need some work.
+// For now we simply treat a bidirectional LSTM as two separate LSTMs. We still need to reshape 
+// its output to squeeze away the direction dimension.
+// TODO: expend this method to handle bidirection LSTMs.
+ONNXIR::Node *CNTKToONNXHelper::AddReshapeNodeToCNTKFunction(const FunctionPtr &src, ONNXIR::Node* node, const std::vector<int> &shape, ONNXIR::Graph* graph)
+{
+    FunctionPtr blockRoot = src->BlockRoot();
+    Variable output;
+    if (src->OpName() == L"LSTM")
+        output = src->Outputs()[0];
+    else
+        // a bidirection LSTM cast
+        NOT_IMPLEMENTED
+    
+    std::string nodeName = ToString(blockRoot->Uid());
+    
+    // NodeArg name of the output of the reshaped node
+    std::string outputNodeArgName = ToString(output.Uid());
+
+    // We need to name reshape node's output arg with LSTM output name.
+    // Thus we need to give LSTM node output a different name.   
+    std::vector<ONNXIR::NodeArg>& outputArgs = node->Mutable_OutputDefs();
+    TensorShapeProto inputShape(*outputArgs[0].Shape());
+
+    // replace LSTM output arg with one of different name and same shape. 
+    std::string lstmToReshapeNodeArgName = outputNodeArgName + "_tmp";
+    outputArgs[0] = ONNXIR::NodeArg(lstmToReshapeNodeArgName, nullptr);
+    outputArgs[0].SetShape(inputShape);
+
+    // 
+    ONNXIR::NodeArg inputArg = ONNXIR::NodeArg(lstmToReshapeNodeArgName, nullptr);
+    inputArg.SetShape(inputShape);
+
+    // this is the output NodeArg of the reshaped node. It has to be named 
+    // with the original node's output NodeArg so that LotusIR can make a the connection. 
+    onnx::TypeProto typeProto = ToTypeProto(shape, false);
+    ONNXIR::NodeArg outputArg(outputNodeArgName, &typeProto);
+
+    ONNXIR::Node* reshapeNode = graph->AddNode(nodeName + string("_reshape"), "Reshape", "", { inputArg }, { outputArg });
+    reshapeNode->AddAttribute("shape", ToINTS(shape, false));
+    return reshapeNode;
+}
+
+#include <iostream>
 //
 // This is the main horsepower, it navigate CNTK graph recursivley while keep track of all visited nodes and variables, 
 // and create the corresponding ONNX graph.
@@ -1753,16 +1734,17 @@ ONNXIR::Node* CNTKToONNXHelper::CreateNode(const FunctionPtr& src,
     ONNXIR::Node* functionNode = nullptr;
     std::string opName = ToString(src->OpName());
 
-    if (opName == "Splice")
-    { 
-
-        std::vector<Variable> inputs = src->Inputs();
-        bool bidiectionalLSTM = inputs.size() == 2 &&
-            std::all_of(inputs.begin(), inputs.end(), [](Variable &input) {return input.Owner() != nullptr && input.Owner()->OpName() == L"LSTM"; });
-        if (bidiectionalLSTM)
-            return CreateLSTMNode(src, graph, functionNodes, variableNodes, compositeOutputsMap);
-    }
-    else if (opName == "LSTM")
+    //if (opName == "Splice")
+    //{ 
+    // TODO: uncomment this code once bidirectional LSTM is supprted
+    //    std::vector<Variable> inputs = src->Inputs();
+    //    bool bidiectionalLSTM = inputs.size() == 2 &&
+    //        std::all_of(inputs.begin(), inputs.end(), [](Variable &input) {return input.Owner() != nullptr && input.Owner()->OpName() == L"LSTM"; });
+    //    if (bidiectionalLSTM)
+    //        return CreateLSTMNode(src, graph, functionNodes, variableNodes, compositeOutputsMap);
+    //}
+    //else 
+    if (opName == "LSTM")
     {
         return CreateLSTMNode(src, graph, functionNodes, variableNodes, compositeOutputsMap);
     }
@@ -1790,6 +1772,14 @@ ONNXIR::Node* CNTKToONNXHelper::CreateNode(const FunctionPtr& src,
         (!Operators::IsSupportedCNTKOP(src->OpName()) || Operators::IsLayerCNTKOP(src->OpName())))
     {
         functionNode = CreateNode(src->BlockRoot(), graph, functionNodes, variableNodes, compositeOutputsMap);
+        // TODO: this is to workaround LotusRT lossing sequence dimension issue 
+        if (false && opName == "Embedding" && src->Uid() == L"Block18870")
+        {
+            functionNodes.emplace(src, functionNode);
+            std::vector<int> shape({1, 1, (int)src->Output().Shape().Dimensions()[0]});
+            ONNXIR::Node* reshapedNode = AddReshapeNodeToCNTKFunction(src, functionNode, shape, graph);
+            return reshapedNode;
+        }
     }
     //
     // For compatibility of other framework that support ONNX, we will limit the list of OPs to the one
@@ -1811,6 +1801,9 @@ ONNXIR::Node* CNTKToONNXHelper::CreateNode(const FunctionPtr& src,
 
         for (size_t inputIndex = 0; inputIndex < src->Inputs().size(); ++inputIndex)
         {
+            if (src->Uid() == L"Plus20546")
+                std::cout << "Plus20546" << std::endl;
+
             auto input = src->Inputs()[inputIndex];
 
             if (input.IsPlaceholder())
@@ -1875,6 +1868,8 @@ ONNXIR::Node* CNTKToONNXHelper::CreateNode(const FunctionPtr& src,
                     inputArgType = ToTypeProto(input.Shape().SubShape(0, input.Shape().Rank() - 1));
                 else
                     inputArgType = ToTypeProto(input.Shape(), input.HasBatchAxis(), HasSequenceAxis(input));
+                if (ToString(input.Uid()).find("Input") != -1 && !isConstant && !input.IsOutput())
+                    (*inputArgType.mutable_tensor_type()->mutable_shape()->mutable_dim())[0].set_dim_value(SequenceLen);
             }
 
             UpdateONNXType(input.GetDataType(), inputArgType);
@@ -2262,6 +2257,10 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
         }
         else if (Operators::SupportBroadcast(src->OpName()))
         {
+            if (src->Uid() == L"Plus20546")
+            {
+                std::cout << "Plus20546" << std::endl;
+            }
             std::pair<std::vector<int>, std::vector<int>> adjustedDims;
             bool broadcast = false, swapInput = false;
             int axis = 0;
@@ -2269,6 +2268,15 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
             std::tie<int, int>(index0, index1) = Operators::GetElementWiseInputIndices(src->OpName());
             std::tie<std::pair<std::vector<int>, std::vector<int>>, bool, int>(adjustedDims, broadcast, axis, swapInput) =
                 AdjustForBroadcastShape(src->Inputs()[index0], src->Inputs()[index1]);
+
+
+            if (src->Inputs()[1].IsConstant() && src->Inputs()[1].Shape().Rank() == 0 &&
+                src->Inputs()[0].DynamicAxes().size() != 0)
+            {
+                // TODO: move into AdjustForBroadcastShape
+                // a scalar with dynamic access elementwise a constant scalar.   
+                broadcast = true;
+            }
 
             node->AddAttribute("broadcast", (int64_t)(broadcast ? 1 : 0));
             if (broadcast && axis >= 0)
@@ -2500,10 +2508,36 @@ ONNXIR::Node* FindByName(ONNXIR::Graph* graph, const std::string &name)
 ONNXIR::Node* CNTKToONNXHelper::AddNode(const FunctionPtr& src, ONNXIR::Graph* graph, const std::vector<ONNXIR::NodeArg>& inputs, const std::vector<ONNXIR::NodeArg>& outputs)
 {
     ONNXIR::Node* node = nullptr;
-    auto orderedInputs = MapInputsOrderToONNX(src, inputs);
+    std::vector<ONNXIR::NodeArg> orderedInputs = MapInputsOrderToONNX(src, inputs);
     auto nodeName = src->Name().empty() ? ToString(src->Uid()) : ToString(src->Name());
 
-    if (Operators::SupportBroadcast(src->OpName()))
+    if (L"Embedding" == src->OpName())
+    {
+        ONNXIR::Node* argMax = AddArgMaxNode(orderedInputs[1], graph);
+        ONNXIR::Node* int32Cast = AddCastNode(argMax->OutputDefs()[0], graph);
+
+        bool reshapeGather = true;
+        if (reshapeGather)
+        {
+            ONNXIR::NodeArg gatherIndexInputNodeArg(int32Cast->OutputDefs()[0].Name(), nullptr);
+            ONNXIR::NodeArg gatherSourceInputNodeArg(orderedInputs[0].Name(), nullptr);
+            ONNXIR::NodeArg gatherOutputArg(nodeName + "_gather_tmp", nullptr);
+            ONNXIR::Node* gatherNode = graph->AddNode(nodeName + "_tmp", "Gather", "", { gatherSourceInputNodeArg , gatherIndexInputNodeArg }, { gatherOutputArg });
+
+            ONNXIR::NodeArg reshapeInputNodeArg(gatherNode->OutputDefs()[0].Name(), nullptr);
+            ONNXIR::Node* reshapedGather = graph->AddNode(nodeName, "Reshape", "", { reshapeInputNodeArg }, outputs);
+            int input_size = src->Output().Shape()[0];
+            std::vector<int> newShape({ SequenceLen, 1, input_size });
+            reshapedGather->AddAttribute("shape", ToINTS(newShape, false));
+            return reshapedGather;
+        }
+        else
+        {
+            ONNXIR::NodeArg gatherIndexInputNodeArg(int32Cast->OutputDefs()[0].Name(), nullptr);
+            ONNXIR::Node* gatherNode = graph->AddNode(nodeName, "Gather", "", { orderedInputs[0] , gatherIndexInputNodeArg }, outputs);
+        }
+    }
+    else if (Operators::SupportBroadcast(src->OpName()))
     {
         // when converting CNTK to ONNX with broadcasting, the boardcasting input at right-hand-side
         // needs to be reshaped. Reshape is not needed if the broadcasting input is a constant. In such case
@@ -2530,7 +2564,43 @@ ONNXIR::Node* CNTKToONNXHelper::AddNode(const FunctionPtr& src, ONNXIR::Graph* g
         }
         else
         {
-            node = graph->AddNode(nodeName, ToOPName(src), "", orderedInputs, outputs);
+            // TODO: AdjustForBroadcastShape failed to handle case [#, *](2) + (2). It shall return broadcast = true.
+            if (src->Uid() == L"Plus20546")
+            {
+                if (true)
+                {
+                    // TODO: apply workaround to MatMul by wrapping it with reshape ops. 
+                    // This shall be done after code refactoring.
+                    // in this case, "Plus20546" comes after matmul which collaped the first 2 axis (sequence and batch)
+                    // into one. need to recover it assuming batch size = 1.
+                    std::vector<int64_t> shape1 = ToINTS(TensorShapeProtoToTypeProto(input1Shape));
+                    std::vector<int64_t> shape2 = ToINTS(TensorShapeProtoToTypeProto(input2Shape));
+
+                    ONNXIR::NodeArg inputOutput2Arg(orderedInputs[1].Name() + string("_reshape2"), nullptr);
+                    {
+                        auto reshapeNode2 = graph->AddNode(nodeName + string("_reshape2"), "Reshape", "", { orderedInputs[1] }, { inputOutput2Arg });
+                        // remove batch and sequence dimensions
+                        shape2.erase(shape2.begin());
+                        shape2.erase(shape2.begin());
+                        reshapeNode2->AddAttribute("shape", shape2);
+                    }
+
+                    ONNXIR::NodeArg inputOutput1Arg(orderedInputs[0].Name() + string("_reshape1"), nullptr);
+                    {
+                        auto reshapeNode1 = graph->AddNode(nodeName + string("_reshape1"), "Reshape", "", { orderedInputs[0] }, { inputOutput1Arg });
+                        (const_cast<TensorShapeProto*>(input1Shape))->mutable_dim(0)->set_dim_value(SequenceLen);
+                        onnx::TypeProto reshapeTypeProto1 = TensorShapeProtoToTypeProto(input1Shape);
+                        reshapeNode1->AddAttribute("shape", ToINTS(reshapeTypeProto1));
+                    }
+
+                    node = graph->AddNode(nodeName, ToOPName(src), "", { inputOutput1Arg, inputOutput2Arg }, outputs);
+                    node->AddAttribute("broadcast", (int64_t)1);
+                }
+                else
+                    node = graph->AddNode(nodeName, ToOPName(src), "", orderedInputs, outputs);
+            }
+            else
+                node = graph->AddNode(nodeName, ToOPName(src), "", orderedInputs, outputs);
         }
     }
     else
@@ -2604,3 +2674,56 @@ std::pair<std::vector<int>, std::vector<int> > CNTKToONNXHelper::GetONNXPadsAttr
     }
     return std::make_pair(padsValueVectorLower, padsValueVectorUpper);
 }
+
+#pragma warning(disable: 4189)
+
+void CNTKToONNXHelper::FillTensorWithScalar(const std::vector<NDArrayViewPtr> &srcs,
+    onnx::TensorProto& dst, const std::vector<int> dstShape)
+{
+    auto dataType = srcs[0]->GetDataType();
+    // the first dimension is for srcs count
+    int eachSrcSize = std::accumulate(dstShape.begin() + 1, dstShape.end(), 1, std::multiplies<int>());
+    switch (dataType)
+    {
+    case DataType::Float:
+    {
+        dst.set_data_type(onnx::TensorProto_DataType_FLOAT);
+        for (int i = 0; i < srcs.size(); i++)
+        {
+            auto srcTemp = srcs[i]->DeepClone();
+            srcTemp->ChangeDevice(DeviceDescriptor::CPUDevice());
+            float scalar = *srcTemp->DataBuffer<float>();
+
+            for (size_t index = 0; index < eachSrcSize; index++)
+            {
+                *(dst.mutable_float_data()->Add()) = scalar;
+            }
+        }
+
+        break;
+    }
+    case DataType::Double:
+    {
+        dst.set_data_type(onnx::TensorProto_DataType_DOUBLE);
+        for (int i = 0; i < srcs.size(); i++)
+        {
+            auto srcTemp = srcs[i]->DeepClone();
+            srcTemp->ChangeDevice(DeviceDescriptor::CPUDevice());
+            float scalar = *srcTemp->DataBuffer<float>();
+
+            for (size_t index = 0; index < eachSrcSize; index++)
+            {
+                *(dst.mutable_double_data()->Add()) = scalar;
+            }
+        }
+
+        break;
+    }
+    default:
+        NOT_IMPLEMENTED;
+    }
+
+    for (auto dim : dstShape)
+        *(dst.mutable_dims()->Add()) = dim;
+}
+

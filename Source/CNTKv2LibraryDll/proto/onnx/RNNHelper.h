@@ -106,8 +106,24 @@ FunctionPtr CreateLSTM(const Node *node, const std::vector<Variable> &inputs, co
         Variable B = Variable();
         if (numDirections == 1 && inputs.size() >= 4)
             B = inputs[3];
-        else if (numDirections == 2 && inputs.size() > 5)
+        else if (numDirections == 2 && inputs.size() >= 7)
             B = inputs[5 + dir];
+
+        Variable initHVariable = X.GetDataType() == DataType::Double ? Constant::Scalar(0.0) : Constant::Scalar(0.0f);
+        if (numDirections == 1 && inputs.size() >= 5)
+            initHVariable = inputs[4];
+        else if (numDirections == 2 && inputs.size() >= 9)
+            initHVariable = inputs[7 + dir];
+
+        Variable initCVariable = X.GetDataType() == DataType::Double ? Constant::Scalar(0.0) : Constant::Scalar(0.0f);
+        if (numDirections == 1 && inputs.size() >= 6)
+            initCVariable = inputs[5];
+        else if (numDirections == 2 && inputs.size() >= 11)
+            initCVariable = inputs[9 + dir];
+
+        // TODO: DONT hard code, use init value
+        //float init_state_value = 0.1F;
+        //Constant initVariable = Constant::Scalar(init_state_value);
 
         int hiddenDim = W.Shape()[0] / 4;
         int inputDim = W.Shape()[1];
@@ -118,13 +134,10 @@ FunctionPtr CreateLSTM(const Node *node, const std::vector<Variable> &inputs, co
         bool go_backwards = direction == "reverse" || (numDirections == 2 && dir == 1);
 
         std::function<FunctionPtr(const Variable&)> futureValueRecurrenceHook;
-        // TODO: DONT hard code, use init value
-        float init_state_value = 0.1F;
-        Constant initVariable = Constant::Scalar(init_state_value);
         if (go_backwards)
-            futureValueRecurrenceHook = [initVariable](const Variable& x) { return FutureValue(x, initVariable); };
+            futureValueRecurrenceHook = [initHVariable](const Variable& x) { return FutureValue(x, initHVariable); };
         else
-            futureValueRecurrenceHook = [initVariable](const Variable& x) { return PastValue(x, initVariable); };
+            futureValueRecurrenceHook = [initCVariable](const Variable& x) { return PastValue(x, initCVariable); };
 
         std::tie<FunctionPtr, FunctionPtr>(encoderOutputH, encoderOutputC) = LSTMPComponentWithSelfStabilization(
             X, { (size_t)hiddenDim }, { (size_t)hiddenDim },

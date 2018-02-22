@@ -363,6 +363,9 @@ namespace ONNX
         { L"ImageScaler",{ {
             { L"ImageScaler", "ImageScaler" },
             } } },
+        { L"Embedding",{ {
+            { L"Embedding", "Gather" },
+            } } },
     };
 
     // given a cntkOpName and cntk attribute OpName which is saved in CNTK::Function's attribute,
