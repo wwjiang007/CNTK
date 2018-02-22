@@ -1357,9 +1357,9 @@ template class AssignNode<double>;
 
 // TODO: We currently only support external nodes that cannot be part of CNTK recurrent loops
 template <class ElemType>
-class OutputMultiplexerNode final : public ComputationNodeNonLooping<ElemType>, public NumInputs<1>
+class OutputMultiplexerNode final : public ComputationNode<ElemType>, public NumInputs<1>
 {
-    typedef ComputationNodeNonLooping<ElemType> Base; UsingComputationNodeMembersBoilerplate;
+    typedef ComputationNode<ElemType> Base; UsingComputationNodeMembersBoilerplate;
     static const std::wstring TypeName() { return L"OutputMultiplexer"; }
 
 public:
@@ -1370,24 +1370,59 @@ public:
             LogicError("OutputMultiplexerNode ctor must not be instantiated with outputIndex == 0");
     }
 
-    virtual void ForwardPropNonLooping() override
+    virtual void ForwardProp(const FrameRange& fr) override
     {
+        bool inSEQMode = false;
+        if (!fr.IsAllFrames())
+        {
+            inSEQMode = true;
+        }
+
         // TODO: We should avoid this copy but that requires carefully managing the 
         // lifetimes of the Value objects since to be able to directly use the 
         // input Value as its output, we have to make sure that the input's Value
         // is not reused until all dependents of this node are finished.
         auto inputNode = Input(0)->template As<MultiOutputNode<ElemType>>();
-        Value().AssignValuesOf(*inputNode->m_outputsValue[m_outputIndex]);
+        //Value().AssignValuesOf(*inputNode->m_outputsValue[m_outputIndex]);
+
+        if (inSEQMode)
+        {
+            // Replace only a column of the output value corresponding to the
+            // input frame.
+            Value().SetColumn(*inputNode->m_outputsValue[m_outputIndex], fr.timeIdxInSeq);
+        }
+        else
+        {
+            // Set the entire output value.
+            Value().SetValue(*inputNode->m_outputsValue[m_outputIndex]);
+        }
     }
 
-    virtual void BackpropToNonLooping(size_t inputIndex) override
+    virtual void BackpropTo(const size_t inputIndex, const FrameRange& fr) override
     {
+        bool inSEQMode = false;
+        if (!fr.IsAllFrames())
+        {
+            inSEQMode = true;
+        }
+
         // TODO: We should avoid this copy but that requires carefully managing the 
         // lifetimes of the Gradient objects since to be able to directly use the 
         // Gradient as input's gradient, we have to make sure that the Gradient
         // is not reused until all the inputs are finished backpropagating to their inputs.
         auto inputNode = Input(0)->template As<MultiOutputNode<ElemType>>();
-        inputNode->m_outputsGradient[m_outputIndex]->SetValue(Gradient());
+        //inputNode->m_outputsGradient[m_outputIndex]->SetValue(Gradient());
+
+        MBLayoutPtr layout = make_shared<MBLayout>();
+        std::shared_ptr<Matrix<ElemType>> outputGradient;
+        if (inSEQMode)
+        {
+            inputNode->m_outputsGradient[m_outputIndex]->SetValue(Gradient().ColumnSlice(fr.timeIdxInSeq, 1));           
+        }
+        else
+        {
+            inputNode->m_outputsGradient[m_outputIndex]->SetValue(Gradient());
+        }
     }
 
     virtual void Validate(bool isFinalValidationPass) override
