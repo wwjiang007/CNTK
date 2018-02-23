@@ -1645,9 +1645,6 @@ FunctionPtr ONNXToCNTKHelper::CreateFunction(const Node *node, const std::vector
     }
     else if (onnxOpName == "Add")
     {
-        if (node->Name() == "Plus20546")
-            std::cout << "Plus20546" << std::endl;
-
         Variable input0, input1;
         std::tie<Variable, Variable>(input0, input1) = BroadcastElementWiseInput(node, inputs[0], inputs[1]);
         FunctionPtr cntkFunction = Plus(input0, input1, ToWString(node->Name()));

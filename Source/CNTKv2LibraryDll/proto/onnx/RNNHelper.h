@@ -3,7 +3,8 @@
 // Copyright (c) Microsoft. All rights reserved.
 // Licensed under the MIT license. See LICENSE.md file in the project root for full license information.
 //
-// Copied from CNTK\Tests\EndToEndTests\CNTKv2Library\Common\Common.h
+// originally from CNTK\Tests\EndToEndTests\CNTKv2Library\Common\Common.h
+// 
 
 #pragma once
 #include <algorithm>
@@ -12,7 +13,7 @@
 
 using namespace CNTK;
 
-std::pair<FunctionPtr, FunctionPtr> LSTMPCellWithSelfStabilization(Variable input, Variable prevOutput, Variable prevCellState, 
+std::pair<FunctionPtr, FunctionPtr> LSTMPCell(Variable input, Variable prevOutput, Variable prevCellState,
     Constant &W, Constant &R, Constant &B)
 {
     size_t outputDim = prevOutput.Shape()[0];
@@ -43,16 +44,17 @@ std::pair<FunctionPtr, FunctionPtr> LSTMPCellWithSelfStabilization(Variable inpu
 
     auto ct = Plus(bft, bit);
 
-    auto ot = Sigmoid(ot_proj); 
+    auto ot = Sigmoid(ot_proj);
     auto ht = ElementTimes(ot, Tanh(ct));
 
-    auto c = ct; 
+    auto c = ct;
     auto h = ht;
 
     return{ h, c };
 }
 
-std::tuple<FunctionPtr, FunctionPtr> LSTMPComponentWithSelfStabilization(Variable input,
+
+std::tuple<FunctionPtr, FunctionPtr> LSTMPComponent(Variable input,
     const NDShape& outputShape,
     const NDShape& cellShape,
     const std::function<FunctionPtr(const Variable&)>& recurrenceHookH,
@@ -62,7 +64,7 @@ std::tuple<FunctionPtr, FunctionPtr> LSTMPComponentWithSelfStabilization(Variabl
     auto dh = PlaceholderVariable(outputShape, input.DynamicAxes());
     auto dc = PlaceholderVariable(cellShape, input.DynamicAxes());
 
-    auto LSTMCell = LSTMPCellWithSelfStabilization(input, dh, dc, W, R, B);
+    auto LSTMCell = LSTMPCell(input, dh, dc, W, R, B);
 
     auto actualDh = recurrenceHookH(LSTMCell.first);
     auto actualDc = recurrenceHookC(LSTMCell.second);
@@ -139,7 +141,7 @@ FunctionPtr CreateLSTM(const Node *node, const std::vector<Variable> &inputs, co
         else
             futureValueRecurrenceHook = [initCVariable](const Variable& x) { return PastValue(x, initCVariable); };
 
-        std::tie<FunctionPtr, FunctionPtr>(encoderOutputH, encoderOutputC) = LSTMPComponentWithSelfStabilization(
+        std::tie<FunctionPtr, FunctionPtr>(encoderOutputH, encoderOutputC) = LSTMPComponent(
             X, { (size_t)hiddenDim }, { (size_t)hiddenDim },
             futureValueRecurrenceHook, futureValueRecurrenceHook, (Constant &)W, (Constant &)R, (Constant &)B);
         encoderOutputHs.push_back(encoderOutputH);
