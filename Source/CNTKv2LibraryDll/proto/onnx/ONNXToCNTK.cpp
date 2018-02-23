@@ -1386,10 +1386,11 @@ FunctionPtr ONNXToCNTKHelper::CreateFunction(const Node *node, const std::vector
 {
     string onnxOpName = node->OpType();
 
-    if (onnxOpName == "Cast")
+    if (onnxOpName == "Cast" && inputs[0].GetDataType() == DataType::Float && inputs[0].Owner() != nullptr)
     {
-        // TODO: 
-        return Plus(inputs[0], Constant::Scalar(0.0F), ToWString(node->Name()));
+        // CNTK does not support cast op. Only float is available with ONNX support.   
+        // Question for having a cast op: Why not cast data as necessary internally. 
+        return inputs[0].Owner();
     }
     else if (onnxOpName == "LSTM")
     {
