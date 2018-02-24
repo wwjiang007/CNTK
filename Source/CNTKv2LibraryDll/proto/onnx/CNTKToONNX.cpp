@@ -14,6 +14,12 @@
 #include <vector>
 #include <tuple>
 
+#include "Matrix.h"
+//#include "CPUSparseMatrix.h"
+//#include "GPUSparseMatrix.h"
+
+using namespace Microsoft::MSR::CNTK;
+
 using namespace CNTK::ONNX;
 using namespace CNTK;
 
@@ -25,6 +31,11 @@ onnx::TypeProto TensorShapeProtoToTypeProto(const onnx::TensorShapeProto* inputS
         newShape.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(inputShape->dim(index).dim_value());
 
     return newShape;
+}
+
+bool HasSequenceAxis(Variable operand)
+{
+    return (operand.DynamicAxes().size() - (operand.HasBatchAxis() ? 1 : 0)) > 0;
 }
 
 //
@@ -111,7 +122,7 @@ namespace CNTK
         //
         // Convert NDShape and various std::vector types to TensorShape
         //
-        static onnx::TypeProto ToTypeProto(const NDShape& shape, bool hasBatchAxis = false);
+        static onnx::TypeProto ToTypeProto(const NDShape& shape, bool hasBatchAxis = false, bool hasSequenceAxis = false, bool doReverseShape = true);
         static onnx::TypeProto ToTypeProto(const std::vector<bool>& shape);
         static onnx::TypeProto ToTypeProto(const std::vector<int>& shape, bool doReverseVec = true);
         static onnx::TypeProto ToTypeProto(const std::vector<Axis>& axes);
@@ -190,6 +201,61 @@ namespace CNTK
             const NDShape& kernelShape, bool ceilOutDim = false);
 
         //
+        // Takes CNTK's OptimizedRNNStack node and converts it into a series of RNN/LSTM/GRU nodes
+        // on the ONNX side.
+        //
+        static ONNXIR::Node* CreateONNXNodesForOptimizedRNNStack(const FunctionPtr &src,
+            ONNXIR::Graph* graph,
+            std::unordered_map<FunctionPtr, ONNXIR::Node*>& functionNodes,
+            std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
+            const std::unordered_map<Variable, Variable>& compositeOutputsMap);
+
+        //
+        // Takes the OptimizedRNNStack's input combined weight matrix, and splits it into individual
+        // weight and bias matrices for each recurrent op layer.
+        //
+        static std::tuple<std::vector<NDArrayViewPtr>, std::vector<NDArrayViewPtr>, std::vector<NDArrayViewPtr> >
+            SplitOptimzedRnnWtoIndivMats(const Matrix<float>& WbigIn, size_t numLayers, size_t inputSize, size_t hiddenSize,
+                                         bool bidirectional, wstring recurrentOp = L"lstm");
+
+        //
+        // Extracts RNN weight matrices from OptimizedRNNStack's input combined weight matrix.
+        //
+        static Matrix<float> GetWeightMatFromOrnnBigW(Matrix<float>& Wbig, size_t offset,
+            size_t layerInputSize, size_t layerOutputSize, size_t numGates, wstring recurrentOp = L"lstm");
+
+        //
+        // Extracts RNN bias matrices from OptimizedRNNStack's input combined weight matrix.
+        //
+        static Matrix<float> CNTKToONNXHelper::GetBiasMatFromOrnnBigW(Matrix<float>& Wbig, size_t offset,
+            size_t hiddenSize, size_t numGates, wstring recurrentOp = L"lstm");
+
+        //
+        // Takes the OptimizedRNNStack's individual weight matrix and changes the format from 
+        // i,f,c,o (OptimizedRNNStack) to i,o,f,c (ONNX).
+        //
+        static void InplaceAdjustGateOrder(Matrix<float>& Wbig, size_t hiddenSize);
+
+        //
+        // Takes a vector of Matrix<ElemType> which are weights for each layer and each direction
+        // and converts them to a vector of NDArrays, one for each layer, in ONNX LSTM format.
+        //
+        static std::vector<NDArrayViewPtr> ToRnnWeightPerLayerOnnxFormat(std::vector<Matrix<float> >& W, size_t numLayers,
+            size_t numDirections, size_t numGates, size_t hiddenSize, size_t inputSize, bool updateInputSizeWithEachLayer);
+
+        //
+        // Takes a vector of Matrix<ElemType> which are biases for each layer and each direction
+        // and converts them to a vector of NDArrays, one for each layer, in ONNX LSTM format.
+        //
+        static std::vector<NDArrayViewPtr> ToRnnBiasPerLayerOnnxFormat(std::vector<Matrix<float> >& W, size_t numLayers,
+            size_t numDirections, size_t hiddenSize, size_t numGates);
+
+        //
+        // Create a ONNX node for input weight for a recurrence node.
+        //
+        static void CreateRecurrentWeightONNXNodes(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
+            const Variable& Wcombined, std::vector<ONNXIR::NodeArg>& inputs, NDArrayViewPtr W, string WArgName = "");
+
         // A helper function, to reverse any iterable container and return a copy
         // of the reversed container.
         //
@@ -308,8 +374,11 @@ int CNTKToONNXHelper::ToIndex(const Axis& axis)
     return axis.StaticAxisIndex() + 1;
 }
 
-onnx::TypeProto CNTKToONNXHelper::ToTypeProto(const NDShape& shape, bool hasBatchAxis)
+onnx::TypeProto CNTKToONNXHelper::ToTypeProto(const NDShape& shape, bool hasBatchAxis, bool hasSequenceAxis, bool doReverseShape)
 {
+    // !! IMP: This method has been modified quite a bit. Like the introduction of doReverseShape. 
+    // Make sure that it is merged correctly.
+
     onnx::TypeProto newShape;
     if (shape.HasInferredDimension())
     {
@@ -320,7 +389,13 @@ onnx::TypeProto CNTKToONNXHelper::ToTypeProto(const NDShape& shape, bool hasBatc
     if (hasBatchAxis)
         newShape.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(1);
 
-    auto dimensions = reverse(shape.Dimensions());
+    // Sequence dimension should be before batch axis after we reverse the shape (reversal happens below).
+    if (hasSequenceAxis)
+        newShape.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(1);
+
+    auto dimensions = shape.Dimensions();
+    if (doReverseShape)
+        dimensions = reverse(dimensions);
     for (auto dimension : dimensions)
     {
         if (dimension == NDShape::FreeDimension)
@@ -593,6 +668,7 @@ std::tuple<std::pair<std::vector<int>, std::vector<int>>, bool, int, bool> CNTKT
     bool swapInput = false;
 
     bool hasAnyBatchAxis = input1.HasBatchAxis() || input2.HasBatchAxis();
+    bool hasAnySequenceAxis = HasSequenceAxis(input1) || HasSequenceAxis(input2);
 
     // CNTK and ONNX dimensions are reversed.
     // Reverse the dimension so that broadcast and axis calculation is in ONNX sense.
@@ -607,6 +683,8 @@ std::tuple<std::pair<std::vector<int>, std::vector<int>>, bool, int, bool> CNTKT
         if (swapInput)
             std::swap(dims1, dims2);
 
+        if (hasAnySequenceAxis)
+            dims1.insert(dims1.begin(), 1);
         if (hasAnyBatchAxis)
             dims1.insert(dims1.begin(), 1);
 
@@ -628,6 +706,11 @@ std::tuple<std::pair<std::vector<int>, std::vector<int>>, bool, int, bool> CNTKT
     }
 
     // Append batch dimension if needed.
+    if (hasAnySequenceAxis)
+    {
+        dims1.insert(dims1.begin(), 1);
+        dims2.insert(dims2.begin(), 1);
+    }
     if (hasAnyBatchAxis)
     {
         dims1.insert(dims1.begin(), 1);
@@ -727,6 +810,8 @@ ONNXIR::Node* CNTKToONNXHelper::CreateNode(const FunctionPtr& src,
     ONNXIR::Node* functionNode = nullptr;
     std::string opName = ToString(src->OpName());
 
+    if (opName == "OptimizedRNNStack")
+        return CreateONNXNodesForOptimizedRNNStack(src, graph, functionNodes, variableNodes, compositeOutputsMap);
     //
     // If this block node equivalent to a primitive ONNX OP, then treated as such.
     // And just maps its argument to ONNX node.
@@ -1573,4 +1658,299 @@ std::pair<std::vector<int>, std::vector<int> > CNTKToONNXHelper::GetONNXPadsAttr
         padsValueVectorUpper[i] = q;
     }
     return std::make_pair(padsValueVectorLower, padsValueVectorUpper);
+}
+
+ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const FunctionPtr &src,
+    ONNXIR::Graph* graph,
+    std::unordered_map<FunctionPtr, ONNXIR::Node*>& functionNodes,
+    std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
+    const std::unordered_map<Variable, Variable>& compositeOutputsMap)
+{
+    auto numLayers = (size_t)src->Attributes()[L"numLayers"].Value<size_t>();
+    auto hiddenSize = (size_t)src->Attributes()[L"hiddenSize"].Value<size_t>();
+    auto bidirectional = (bool)(src->Attributes()[L"bidirectional"].Value<bool>());
+    auto recurrentOp = (wstring)src->Attributes()[L"recurrentOp"].Value<wstring>();
+
+    size_t inputSize = src->Inputs()[0].Shape()[0];
+    auto Wcombined = src->Inputs()[1];
+    auto WcombinedShape = Wcombined.Shape();
+
+    // Step 1: Read out the OptimzedRNNStack input weight matrix (the big one that combines all weights and biases).
+    NDArrayViewPtr srcTensor = Wcombined.IsParameter() ? Parameter(Wcombined).Value() : Constant(Wcombined).Value();
+    NDArrayViewPtr srcTemp = srcTensor->DeepClone();
+    // This is our own copy so move it to the CPU.
+    srcTemp->ChangeDevice(DeviceDescriptor::CPUDevice());
+    float* Wdata = srcTemp->WritableDataBuffer<float>();
+    // ?? Does Matrix ctor below make a copy of the buffer. If yes, then we don't need to do DeepClone above.
+    Matrix<float> Wm(WcombinedShape[0], WcombinedShape[1], Wdata, 0); // 0 denotes CPU.
+
+    // Step 2: Extract individual weight and bias matrices for each layer from the big weight matrix.
+    std::vector<NDArrayViewPtr> W, R, B;
+    std::tie<std::vector<NDArrayViewPtr>, std::vector<NDArrayViewPtr>, std::vector<NDArrayViewPtr> >
+        (W, R, B) = SplitOptimzedRnnWtoIndivMats(Wm, numLayers, inputSize, hiddenSize, bidirectional, recurrentOp);
+
+    // Step 3: Create ONNX nodes mirroring the implementation of OptimizedRNNStack.
+    ONNXIR::Node* functionNode;
+    auto ornnInput = src->Inputs()[0]; // CNTK OptimizedRNNStack node's input operand.
+    auto ornnInputArgType = ToTypeProto(ornnInput.Shape(), ornnInput.HasBatchAxis(), HasSequenceAxis(ornnInput));
+    UpdateONNXType(ornnInput.GetDataType(), ornnInputArgType);
+    auto ornnOutput = src->Outputs()[0];
+    auto ornnOutputArgType = ToTypeProto(ornnOutput.Shape(), ornnOutput.HasBatchAxis(), HasSequenceAxis(ornnOutput));
+    UpdateONNXType(ornnOutput.GetDataType(), ornnOutputArgType);
+
+    ONNXIR::NodeArg layerInputOperandArg(ToString(ornnInput.Uid()), &ornnInputArgType);
+    for (size_t i = 0; i < numLayers; ++i)
+    {
+        std::vector<ONNXIR::NodeArg> inputs;
+        std::vector<ONNXIR::NodeArg> outputs;
+
+        // Input operand X
+        inputs.push_back(layerInputOperandArg);
+        // Input weight tensor W
+        auto WArgName = ToString(Wcombined.Uid()) + "_W_" + std::to_string(i);
+        CreateRecurrentWeightONNXNodes(graph, variableNodes, Wcombined, inputs, W[i], WArgName);
+        // Input weight tensor R (equivalent to CNTK's H)
+        auto RArgName = ToString(Wcombined.Uid()) + "_R_" + std::to_string(i);
+        CreateRecurrentWeightONNXNodes(graph, variableNodes, Wcombined, inputs, R[i], RArgName);
+        // Input weight tensor B
+        auto BArgName = ToString(Wcombined.Uid()) + "_B_" + std::to_string(i);
+        CreateRecurrentWeightONNXNodes(graph, variableNodes, Wcombined, inputs, B[i], BArgName);
+        // Output argument
+        auto outArgName = ToString(Wcombined.Uid()) + "_Output_" + std::to_string(i);
+        ONNXIR::NodeArg outputArg(outArgName, &ornnOutputArgType);
+        outputs.push_back(outputArg);
+
+        auto rnnNodeName = (src->Name().empty() ? ToString(src->Uid()) : ToString(src->Name())) + std::to_string(i);
+        functionNode = graph->AddNode(rnnNodeName, "LSTM", "", inputs, outputs);
+
+        std::vector<std::string> singleDirectionActivation({"Sigmoid", "Tanh", "Tanh"}); // REVIEW: Check this is the order.
+        std::vector<std::string> activations;
+        activations.insert(activations.end(), singleDirectionActivation.begin(), singleDirectionActivation.end());
+        if (bidirectional)
+            activations.insert(activations.end(), singleDirectionActivation.begin(), singleDirectionActivation.end());
+        functionNode->AddAttribute("activations", activations);
+        functionNode->AddAttribute("direction", bidirectional ? "bidirectional": "forward");
+        functionNode->AddAttribute("hidden_size", (int64_t)hiddenSize);
+        functionNode->AddAttribute("output_sequence", (int64_t)1); // Keeping it 1 because we have the Y output (only).
+
+        layerInputOperandArg = outputArg; // Output of this layer is the input to the next layer in the loop.
+    }
+
+    if (ornnInput.IsOutput())
+        CreateNode(ornnInput.Owner(), graph, functionNodes, variableNodes, compositeOutputsMap);
+
+    functionNodes.emplace(src, functionNode);
+    return functionNode;
+}
+
+std::tuple<std::vector<NDArrayViewPtr>, std::vector<NDArrayViewPtr>, std::vector<NDArrayViewPtr> > 
+CNTKToONNXHelper::SplitOptimzedRnnWtoIndivMats(const Matrix<float>& WbigIn,
+    size_t numLayers, size_t inputSize, size_t hiddenSize, bool bidirectional, wstring recurrentOp)
+{
+    std::vector<NDArrayViewPtr> onnxInputTensor(3);
+    size_t numDirections = bidirectional ? 2 : 1;
+    size_t numGates;
+    if (recurrentOp == L"lstm")
+        numGates = 4;
+    else if (recurrentOp == L"rnnReLU" || recurrentOp == L"rnnTanh")
+        numGates = 1;
+    else
+        InvalidArgument("Unsupported recurrent op value.");
+
+    std::vector<Matrix<float> >  W;
+    std::vector<Matrix<float> >  R;
+    std::vector<Matrix<float> >  B;
+
+    // Make our own copy of matrix on CPU.
+    Matrix<float> Wbig(WbigIn, -1); // _1 is DEVICE_ID for CPU.
+
+    // Step 1: Flatten big W matrix to a row vector.
+    size_t numElements = WbigIn.GetNumElements();
+    Wbig.Reshape(1, numElements); 
+
+    // Step 2: Extracting the weights W and R from big weight matrix (including backward ones in case of bidirectional op).
+    size_t offset(0);
+    size_t layerInputSize(inputSize);
+    for (size_t i = 0; i < numLayers; ++i)
+    {
+        Matrix<float> fW = GetWeightMatFromOrnnBigW(Wbig, offset, layerInputSize, hiddenSize, numGates, recurrentOp);
+        offset += layerInputSize * hiddenSize * numGates;
+        W.push_back(Matrix<float>(fW, -1));
+        Matrix<float> fR = GetWeightMatFromOrnnBigW(Wbig, offset, hiddenSize, hiddenSize, numGates, recurrentOp);
+        fR = GetWeightMatFromOrnnBigW(Wbig, offset, hiddenSize, hiddenSize, numGates, recurrentOp);
+        offset += hiddenSize * hiddenSize * numGates;
+        R.push_back(Matrix<float>(fR, -1));
+
+        // Matrix<float> bW(-1), bR(-1); // deviceId = 0 for CPU.
+        if (bidirectional)
+        {
+            Matrix<float> bW = GetWeightMatFromOrnnBigW(Wbig, offset, layerInputSize, hiddenSize, numGates, recurrentOp);
+            offset += layerInputSize * hiddenSize * numGates;
+            W.push_back(Matrix<float>(bW, -1));
+            Matrix<float> bR = GetWeightMatFromOrnnBigW(Wbig, offset, hiddenSize, hiddenSize, numGates, recurrentOp);
+            offset += hiddenSize * hiddenSize * numGates;
+            R.push_back(Matrix<float>(bR, -1));
+        }
+
+        layerInputSize = hiddenSize * numDirections;
+    }
+
+    // Step 3: Extracting the biases B from big weight matrix (including backward ones in case of bidirectional op).
+    // NOTE: that 'offset' should be set correctly based on the extraction of weight matrices W and R as in Step 2.
+    // In Step 3 we cannot start with offset = 0 for biases, since they start from somewhere in the middle of the
+    // big weight matrix.
+    for (size_t i = 0; i < numLayers; ++i)
+    {
+        Matrix<float> fB = GetBiasMatFromOrnnBigW(Wbig, offset, hiddenSize, numGates, recurrentOp);
+        offset += 2 * hiddenSize * numGates;
+        B.push_back(Matrix<float>(fB, -1));
+        if (bidirectional)
+        {
+            Matrix<float> bB = GetBiasMatFromOrnnBigW(Wbig, offset, hiddenSize, numGates, recurrentOp);
+            offset += 2 * hiddenSize * numGates;
+            B.push_back(Matrix<float>(bB, -1));
+        }
+    }
+
+    // Step 4: Convert weight matrices into NDArrayView;
+    std::vector<NDArrayViewPtr> Wonnx = ToRnnWeightPerLayerOnnxFormat(W, numLayers, numDirections, numGates, hiddenSize, inputSize, true);
+    std::vector<NDArrayViewPtr> Ronnx = ToRnnWeightPerLayerOnnxFormat(R, numLayers, numDirections, numGates, hiddenSize, hiddenSize, false);
+
+    // Step 5: Convert bias matrices into NDArrayView;
+    std::vector<NDArrayViewPtr> Bonnx = ToRnnBiasPerLayerOnnxFormat(B, numLayers, numDirections, hiddenSize, numGates);
+
+    return std::make_tuple(Wonnx, Ronnx, Bonnx);
+}
+
+Matrix<float> CNTKToONNXHelper::GetWeightMatFromOrnnBigW(Matrix<float>& Wbig, size_t offset,
+    size_t layerInputSize, size_t layerOutputSize, size_t numGates, wstring recurrentOp)
+{
+    Matrix<float> W0 = Wbig.ColumnSlice(offset, layerInputSize*layerOutputSize*numGates);
+    W0.Reshape(layerOutputSize*numGates, layerInputSize);
+    auto W = W0.Transpose(); // Have to do this because Matrix::InplaceTranspose is not implemented.
+    if (recurrentOp == L"lstm") // rnnReLU and rnnTanh have one gate so reordering is moot.
+        InplaceAdjustGateOrder(W, layerOutputSize);
+    return W;
+}
+
+Matrix<float> CNTKToONNXHelper::GetBiasMatFromOrnnBigW(Matrix<float>& Wbig, size_t offset,
+    size_t hiddenSize, size_t numGates, wstring recurrentOp)
+{
+    Matrix<float> b(1, 2 * hiddenSize*numGates, -1);
+
+    Matrix<float> b1 = Wbig.ColumnSlice(offset, hiddenSize*numGates);
+    auto nextoffset = offset + hiddenSize * numGates; // Note that 'offset' still must be updated outside. Not returning offset back, say through a tuple, because 
+                                                      // that removes return value optimization (RVO) on the output argument of this method.
+    Matrix<float> b2 = Wbig.ColumnSlice(nextoffset, hiddenSize*numGates);
+
+    // Creating bias vector b as [W_b, R_b]. Creating these values as done in
+    // optimized_rnnstack_converter.py. W_bias is b1 + b2. R_bias is just zeros.
+    b1.AssignSumOf(b1, b2);
+    if (recurrentOp == L"lstm") // rnnReLU and rnnTanh have only one gates so reordering is moot.
+        InplaceAdjustGateOrder(b1, hiddenSize);
+    b.SetColumnSlice(b1, 0, hiddenSize * numGates);
+    b.SetColumnSlice(Matrix<float>::Zeros(1, hiddenSize * numGates, -1), hiddenSize * numGates, hiddenSize * numGates);
+
+    return b;
+}
+
+void CNTKToONNXHelper::InplaceAdjustGateOrder(Matrix<float>& W, size_t hiddenSize)
+{
+    // REVIEW sptiwari: Written just for LSTM. Assumes numGates = 4. GRU to be included later.
+
+    size_t offset(0);
+
+    auto Wi = W.ColumnSlice(offset, hiddenSize);
+    offset += hiddenSize;
+    auto Wf = W.ColumnSlice(offset, hiddenSize);
+    offset += hiddenSize;
+    auto Wc = W.ColumnSlice(offset, hiddenSize);
+    offset += hiddenSize;
+    auto Wo = W.ColumnSlice(offset, hiddenSize);
+
+    offset = 0;
+    W.SetColumnSlice(Wi, offset, hiddenSize);
+    offset += hiddenSize;
+    W.SetColumnSlice(Wo, offset, hiddenSize);
+    offset += hiddenSize;
+    W.SetColumnSlice(Wf, offset, hiddenSize);
+    offset += hiddenSize;
+    W.SetColumnSlice(Wc, offset, hiddenSize);
+}
+
+std::vector<NDArrayViewPtr> CNTKToONNXHelper::ToRnnWeightPerLayerOnnxFormat(std::vector<Matrix<float> >& W, size_t numLayers,
+    size_t numDirections, size_t numGates, size_t hiddenSize, size_t inputSize, bool updateInputSizeWithEachLayer)
+{
+    std::vector<NDArrayViewPtr> Wonnx;
+    // First layer input size is inputSize. Other layers' input size is numDirections*hiddenSize.
+    size_t layerInputSize(inputSize); 
+    for (size_t i = 0; i < numLayers; ++i)
+    {
+        // Here we create a currLayerWeightMatrix which has 3D tensor in a 2D matrix data buffer.
+        // The format is [Plane 1 Plane2]. This is the buffer format needed to pass in to NDArrayView
+        // for creating a 3D tensor as needed by ONNX LSTM.
+        Matrix<float> currLayerWeightMatrix(hiddenSize * numGates, layerInputSize * numDirections, -1);
+        size_t offset = 0;
+        for (size_t j = 0; j < numDirections; ++j)
+        {
+            Matrix<float> temp = W[i*numDirections + j].Transpose(); // Have to do this because Matrix::InplaceTranspose is not implemented.
+            currLayerWeightMatrix.SetColumnSlice(temp, offset, layerInputSize);
+            offset += layerInputSize;
+        }
+        Wonnx.push_back(MakeSharedObject<NDArrayView>(::CNTK::DataType::Float, NDShape({ numDirections, hiddenSize*numGates, layerInputSize }),
+            (void*)currLayerWeightMatrix.Data(), currLayerWeightMatrix.BufferSize(), DeviceDescriptor::CPUDevice()));
+
+        if (updateInputSizeWithEachLayer)
+        {
+            // Except for first layer (so starting from second layer), the layer input sizes are 
+            // hiddenSize for one directional, and 2*hiddenSize for bidirectional. This is needed
+            // for W matrix which is based on inputSize, but not the H (sometimes called R) matrix, 
+            // which is just based on hiddenSize which does not change.
+            layerInputSize = hiddenSize * numDirections;
+        }
+    }
+    return Wonnx;
+}
+
+std::vector<NDArrayViewPtr> CNTKToONNXHelper::ToRnnBiasPerLayerOnnxFormat(std::vector<Matrix<float> >& B, size_t numLayers,
+    size_t numDirections, size_t hiddenSize, size_t numGates)
+{
+    std::vector<NDArrayViewPtr> Bonnx;
+    for (size_t i = 0; i < numLayers; ++i)
+    {
+        // Here we create a currLayerWeightMatrix which has 3D tensor in a 2D matrix data buffer.
+        // The format is [Plane 1 Plane2]. This is the buffer format needed to pass in to NDArrayView
+        // for creating a 3D tensor as needed by ONNX LSTM.
+        Matrix<float> currLayerBiasMatrix(2 * hiddenSize * numGates, numDirections, -1);
+        size_t offset = 0;
+        for (size_t j = 0; j < numDirections; ++j)
+        {
+            Matrix<float> temp = B[i*numDirections + j].Transpose(); // Have to do this because Matrix::InplaceTranspose is not implemented.
+            currLayerBiasMatrix.SetColumnSlice(temp, offset, 1);
+            ++offset;
+        }
+        auto finalBiasMatrix = currLayerBiasMatrix.Transpose();
+        Bonnx.push_back(MakeSharedObject<NDArrayView>(::CNTK::DataType::Float, NDShape({ numDirections, 2*hiddenSize*numGates }),
+            (void*)finalBiasMatrix.Data(), finalBiasMatrix.BufferSize(), DeviceDescriptor::CPUDevice()));
+    }
+    return Bonnx;
+}
+
+void CNTKToONNXHelper::CreateRecurrentWeightONNXNodes(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes, 
+    const Variable& Wcombined, std::vector<ONNXIR::NodeArg>& inputs, NDArrayViewPtr W, string WArgName)
+{
+    auto WArgType = ToTypeProto(W->Shape(), false, false, false); // Last arg is false because we don't want shape reversal here.
+    UpdateONNXType(Wcombined.GetDataType(), WArgType); // NOTE: Only float type supported.
+    ONNXIR::NodeArg WArg(WArgName, &WArgType);
+    inputs.push_back(WArg);
+
+    std::vector<ONNXIR::NodeArg> varInputs;
+    std::vector<ONNXIR::NodeArg> varOutputs;
+
+    varOutputs.push_back({ WArg });
+    ONNXIR::Node* variableNode = graph->AddNode(WArgName, "Constant", "", varInputs, varOutputs);
+    onnx::TensorProto dstTensor;
+    CopyTensor(W, dstTensor, &WArgType);
+    variableNode->AddAttribute("value", dstTensor);
+    variableNodes.emplace(Wcombined, variableNode); // REVIEW: Wcombined is same for all layers and all W and H. Is this correct or will it create trouble creating the graph?
 }

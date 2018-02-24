@@ -79,6 +79,13 @@ namespace ONNX
             { L"epsilon", "epsilon" },
             // { L"", "momentum" },
         } } },
+        { L"OptimizedRNNStack",{ {
+            { L"OptimizedRNNStack", "OptimizedRNNStack" },
+            { L"hidden_size", "hidden_size" },
+            { L"num_layers", "num_layers" },
+            { L"bidirectional", "bidirectional" },
+            { L"recurrent_op", "recurrent_op" },
+        } } },
         { L"LayerNormalization",{ {
             { L"LayerNormalization", "LayerNormalization" },
             { L"initial_scale", "initial_scale" },
