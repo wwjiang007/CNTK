@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 import cntk as C
 import cntk.contrib.netopt.quantization as qc
+from cntk.layers import BatchNormalization
 C.cntk_py.set_fixed_random_seed(1)
 
 inC, inH, inW = 1, 28, 28
@@ -12,36 +13,56 @@ dat = np.ones([1, inC, inH, inW], dtype = np.float32)
 
 # create a network with convolutions for the tests
 def _create_convolution_model():
-    
+
     with C.layers.default_options(init=C.glorot_uniform(), activation=C.relu):
         h = feature_var
         # The first two layers has bias=False to test, the conversion
         # work with and without bias in the Convolution.
-        h = C.layers.Convolution2D(filter_shape=(5,5),
-                                           num_filters=64,
-                                           strides=(2,2),
-                                           pad=True, bias=False, name='first_convo')(h)
-        
-        h = C.layers.Convolution2D(filter_shape=(5,5),
-                                           num_filters=64,
-                                           strides=(2,2),
-                                           pad=True, bias=False, name='second_convo')(h)
+        a = C.layers.Convolution2D(filter_shape=(5,5),
+                                   num_filters=64,
+                                   strides=(2,2),
+                                   pad=True, bias=False, name='first_convo')(h)
+
+        a = BatchNormalization(map_rank=1, 
+                               normalization_time_constant=4096, 
+                               use_cntk_engine=True, init_scale=1, 
+                               disable_regularization=True)(a)
+
+        b = C.layers.Convolution2D(filter_shape=(5,5),
+                                   num_filters=64,
+                                   strides=(2,2),
+                                   pad=True, bias=False, name='second_convo')(h)
+
+        b = BatchNormalization(map_rank=1, 
+                               normalization_time_constant=4096, 
+                               use_cntk_engine=True, init_scale=1, 
+                               disable_regularization=True)(b)
+        h = a + b
 
         h = C.layers.Convolution2D(filter_shape=(5,5),
-                                           num_filters=64,
-                                           strides=(1,1),
-                                           pad=True, name='thrid_convo')(h)
+                                   num_filters=64,
+                                   strides=(1,1),
+                                   pad=True, name='thrid_convo')(h)
+
+        h = BatchNormalization(map_rank=1, 
+                               normalization_time_constant=4096, 
+                               use_cntk_engine=True, init_scale=1, 
+                               disable_regularization=True)(h)
 
         h = C.layers.Convolution2D(filter_shape=(5,5),
-                                           num_filters=64,
-                                           strides=(1,1),
-                                           pad=True, name='fourth_convo')(h)
+                                   num_filters=64,
+                                   strides=(1,1),
+                                   pad=True, name='fourth_convo')(h)
+
+        h = BatchNormalization(map_rank=1, 
+                               normalization_time_constant=4096, 
+                               use_cntk_engine=True, init_scale=1, 
+                               disable_regularization=True)(h)
         
         r = C.layers.Dense(num_classes, activation=None, name='classify')(h)
     return r
 
 
-   
 # Exclude the first convolution layer.
 def _filter(convolution_block):
     if convolution_block.name and convolution_block.name != 'first_convo':
@@ -50,20 +71,19 @@ def _filter(convolution_block):
         return False
 
 def test_binarization():
-
     z = _create_convolution_model()
     binz = qc.convert_to_binary_convolution(z)
 
     blocks = C.logging.graph.depth_first_search(
                 binz, (lambda x : type(x) == C.Function and x.is_block and x.op_name =='BinaryConvolution') , depth = 0)
-    
+
     assert(len(blocks) == 4) # all convolution blocks should be converted.
 
     binz = qc.convert_to_binary_convolution(z, _filter)
 
     blocks = C.logging.graph.depth_first_search(
                 binz, (lambda x : type(x) == C.Function and x.is_block and x.op_name =='BinaryConvolution') , depth = 0)
-    
+
     assert(len(blocks) == 3) # now only three of them should be converted.
     assert(all(b.op_name != 'first_convo' for b in blocks))
 
@@ -90,17 +110,8 @@ def test_native_convolution(tmpdir):
     functions = C.logging.graph.depth_first_search(
                 native_binz, (lambda x : type(x) == C.Function and x.op_name =='BinaryConvolveOp') , depth = 0)    
     assert(len(functions) == 3)
-    
+
     img_data = np.reshape(dat, (1, 1, 28, 28))
 
     res = native_binz.eval(img_data, device=eval_device)
     assert(len(res) > 0) # evaluation should work with the new model.
-
-def test_resnet_loaded_from_file():
-    model_path = "resnet_model.txt"
-    model = C.load_model(model_path)
-    binz = qc.convert_to_binary_convolution(model)
-
-    filter = (lambda x: type(x) == C.Function and x.op_name == 'BinaryConvolution')
-    functions = C.logging.depth_first_search(binz, filter, depth=0)
-    assert(len(functions) == 21) # all of them have to be converted.
