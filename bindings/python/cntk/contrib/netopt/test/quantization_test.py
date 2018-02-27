@@ -11,8 +11,39 @@ feature_var = C.input_variable((inC, inH, inW))
 label_var = C.input((num_classes))
 dat = np.ones([1, inC, inH, inW], dtype = np.float32)
 
-# create a network with convolutions for the tests
+# create a network with convolutions
 def _create_convolution_model():
+
+    with C.layers.default_options(init=C.glorot_uniform(), activation=C.relu):
+        h = feature_var
+        # The first two layers has bias=False to test, the conversion
+        # work with and without bias in the Convolution.
+        h = C.layers.Convolution2D(filter_shape=(5,5),
+                                   num_filters=64,
+                                   strides=(2,2),
+                                   pad=True, bias=False, name='first_convo')(h)        
+
+        h = C.layers.Convolution2D(filter_shape=(5,5),
+                                   num_filters=64,
+                                   strides=(2,2),
+                                   pad=True, bias=False, name='second_convo')(h)
+
+        h = C.layers.Convolution2D(filter_shape=(5,5),
+                                   num_filters=64,
+                                   strides=(1,1),
+                                   pad=True, name='thrid_convo')(h)
+
+        h = C.layers.Convolution2D(filter_shape=(5,5),
+                                   num_filters=64,
+                                   strides=(1,1),
+                                   pad=True, name='fourth_convo')(h)
+
+        r = C.layers.Dense(num_classes, activation=None, name='classify')(h)
+    return r
+
+
+# create a network with convolutions for the tests with skip level links
+def _create_convolution_model_with_skip_level_links():
 
     with C.layers.default_options(init=C.glorot_uniform(), activation=C.relu):
         h = feature_var
@@ -27,7 +58,7 @@ def _create_convolution_model():
                                normalization_time_constant=4096, 
                                use_cntk_engine=True, init_scale=1, 
                                disable_regularization=True)(a)
-
+        
         b = C.layers.Convolution2D(filter_shape=(5,5),
                                    num_filters=64,
                                    strides=(2,2),
@@ -37,6 +68,7 @@ def _create_convolution_model():
                                normalization_time_constant=4096, 
                                use_cntk_engine=True, init_scale=1, 
                                disable_regularization=True)(b)
+
         h = a + b
 
         h = C.layers.Convolution2D(filter_shape=(5,5),
@@ -58,7 +90,7 @@ def _create_convolution_model():
                                normalization_time_constant=4096, 
                                use_cntk_engine=True, init_scale=1, 
                                disable_regularization=True)(h)
-        
+
         r = C.layers.Dense(num_classes, activation=None, name='classify')(h)
     return r
 
@@ -71,7 +103,7 @@ def _filter(convolution_block):
         return False
 
 def test_binarization():
-    z = _create_convolution_model()
+    z = _create_convolution_model_with_skip_level_links()
     binz = qc.convert_to_binary_convolution(z)
 
     blocks = C.logging.graph.depth_first_search(
