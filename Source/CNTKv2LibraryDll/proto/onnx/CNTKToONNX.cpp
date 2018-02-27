@@ -13,6 +13,7 @@
 #include "BlockFunction.h"
 #include <vector>
 #include <tuple>
+#include <numeric>
 
 #include "Matrix.h"
 //#include "CPUSparseMatrix.h"
@@ -255,6 +256,13 @@ namespace CNTK
         //
         static void CreateRecurrentWeightONNXNodes(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
             const Variable& Wcombined, std::vector<ONNXIR::NodeArg>& inputs, NDArrayViewPtr W, string WArgName = "");
+
+        //
+        // Method to insert reshape and transpose nodes to the output of the ONNX LSTM output
+        // so that it can be fed in as input to the next ONNX LSTM node.
+        //
+        static ONNXIR::NodeArg LSTMOutputShapeAdapter(ONNXIR::NodeArg& inputArg, onnx::TypeProto& inputArgType, ONNXIR::Graph* graph,
+            size_t numDirections, size_t hiddenSize, CNTK::DataType outputType, string adapterBasename = "");
 
         // A helper function, to reverse any iterable container and return a copy
         // of the reversed container.
@@ -1671,6 +1679,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
     auto bidirectional = (bool)(src->Attributes()[L"bidirectional"].Value<bool>());
     auto recurrentOp = (wstring)src->Attributes()[L"recurrentOp"].Value<wstring>();
 
+    size_t numDirections = bidirectional ? 2 : 1;
     size_t inputSize = src->Inputs()[0].Shape()[0];
     auto Wcombined = src->Inputs()[1];
     auto WcombinedShape = Wcombined.Shape();
@@ -1691,11 +1700,21 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
 
     // Step 3: Create ONNX nodes mirroring the implementation of OptimizedRNNStack.
     ONNXIR::Node* functionNode;
+    bool inputNeedsShapeAdapter(false);
     auto ornnInput = src->Inputs()[0]; // CNTK OptimizedRNNStack node's input operand.
     auto ornnInputArgType = ToTypeProto(ornnInput.Shape(), ornnInput.HasBatchAxis(), HasSequenceAxis(ornnInput));
     UpdateONNXType(ornnInput.GetDataType(), ornnInputArgType);
     auto ornnOutput = src->Outputs()[0];
-    auto ornnOutputArgType = ToTypeProto(ornnOutput.Shape(), ornnOutput.HasBatchAxis(), HasSequenceAxis(ornnOutput));
+    // auto ornnOutputArgType = ToTypeProto(ornnOutput.Shape(), ornnOutput.HasBatchAxis(), HasSequenceAxis(ornnOutput));
+    auto outArgType1 = ToTypeProto({ ornnOutput.Shape()[0] / numDirections, numDirections }, ornnOutput.HasBatchAxis(), HasSequenceAxis(ornnOutput));
+    TensorShapeProto outArgShape = outArgType1.mutable_tensor_type()->shape();
+    int opRank = outArgShape.dim_size();
+    std::vector<int> x(opRank);
+    std::iota(x.begin(), x.end(), 0);
+    std::swap(x[opRank - 2], x[opRank - 3]); // swap (last but one) annd (last but two)
+    onnx::TypeProto ornnOutputArgType;
+    for (int index = 0; index < opRank; index++)
+        ornnOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(outArgShape.dim(x[index]).dim_value());
     UpdateONNXType(ornnOutput.GetDataType(), ornnOutputArgType);
 
     ONNXIR::NodeArg layerInputOperandArg(ToString(ornnInput.Uid()), &ornnInputArgType);
@@ -1705,7 +1724,16 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
         std::vector<ONNXIR::NodeArg> outputs;
 
         // Input operand X
-        inputs.push_back(layerInputOperandArg);
+        if (inputNeedsShapeAdapter)
+        {
+            std::string adapterBasename = (src->Name().empty() ? ToString(src->Uid()) : ToString(src->Name())) + "_Adapter_" + std::to_string(i);
+            ONNXIR::NodeArg shapeAdaptedInputOperandArg = LSTMOutputShapeAdapter(layerInputOperandArg, ornnOutputArgType, graph,
+                numDirections, hiddenSize, ornnOutput.GetDataType(), adapterBasename);
+            inputs.push_back(shapeAdaptedInputOperandArg);
+        }
+        else
+            inputs.push_back(layerInputOperandArg);
+
         // Input weight tensor W
         auto WArgName = ToString(Wcombined.Uid()) + "_W_" + std::to_string(i);
         CreateRecurrentWeightONNXNodes(graph, variableNodes, Wcombined, inputs, W[i], WArgName);
@@ -1715,10 +1743,46 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
         // Input weight tensor B
         auto BArgName = ToString(Wcombined.Uid()) + "_B_" + std::to_string(i);
         CreateRecurrentWeightONNXNodes(graph, variableNodes, Wcombined, inputs, B[i], BArgName);
-        // Output argument
-        auto outArgName = ToString(Wcombined.Uid()) + "_Output_" + std::to_string(i);
-        ONNXIR::NodeArg outputArg(outArgName, &ornnOutputArgType);
-        outputs.push_back(outputArg);
+        // Create dummy input arg for optional arg sequence_lens
+        auto seqLenArgName = ToString(Wcombined.Uid()) + "_seq_len_" + std::to_string(i);
+        onnx::TypeProto inputSeqLenArgType = ToTypeProto(std::vector<int>({ 1 }), false);
+        inputSeqLenArgType.mutable_tensor_type()->set_elem_type(onnx::TensorProto_DataType_INT32);
+        ONNXIR::NodeArg inputArg_sequence_lens(seqLenArgName, &inputSeqLenArgType);
+        inputs.push_back(inputArg_sequence_lens);
+        // Create dummy input arg for optional arg initial_h
+        auto initalHArgName = ToString(Wcombined.Uid()) + "_initial_h_" + std::to_string(i);
+        ONNXIR::NodeArg inputArg_initial_h(initalHArgName, nullptr);
+        inputs.push_back(inputArg_initial_h);
+        // Create dummy input arg for optional arg initial_c
+        auto initalCArgName = ToString(Wcombined.Uid()) + "_initial_c_" + std::to_string(i);
+        ONNXIR::NodeArg inputArg_initial_c(initalCArgName, nullptr);
+        inputs.push_back(inputArg_initial_c);
+        // Create dummy input arg for optional arg P (peepholes)
+        auto initalPArgName = ToString(Wcombined.Uid()) + "_P_" + std::to_string(i);
+        ONNXIR::NodeArg inputArg_P(initalPArgName, nullptr);
+        inputs.push_back(inputArg_P);
+
+        // Output arguments
+        int64_t outputSequence = 1; // For now, we always output Y. So this attribute value is 1.
+        auto outArgName = ToString(Wcombined.Uid()) + "_Output_Y_" + std::to_string(i);
+        ONNXIR::NodeArg outputArg_Y(outArgName, &ornnOutputArgType);
+        outputs.push_back(outputArg_Y);
+
+        // Dummy output arg Y_h
+        auto outputYhArgName = ToString(Wcombined.Uid()) + "_Output_Y_h_" + std::to_string(i);
+        // ONNXIR::NodeArg outputArg_Yh(outputYhArgName, nullptr);
+        auto outputYhArgType = ToTypeProto(std::vector<int>({ 1, 1, static_cast<int>(hiddenSize) }), false);
+        UpdateONNXType(ornnOutput.GetDataType(), outputYhArgType);
+        ONNXIR::NodeArg outputArg_Yh(outputYhArgName, &outputYhArgType);
+        outputs.push_back(outputArg_Yh);
+
+        // Dummy output arg Y_c
+        auto outputYcArgName = ToString(Wcombined.Uid()) + "_Output_Y_c_" + std::to_string(i);
+        // ONNXIR::NodeArg outputArg_Yc(outputYcArgName, nullptr);
+        auto outputYcArgType = ToTypeProto(std::vector<int>({ 1, 1, static_cast<int>(hiddenSize) }), false);
+        UpdateONNXType(ornnOutput.GetDataType(), outputYcArgType);
+        ONNXIR::NodeArg outputArg_Yc(outputYcArgName, &outputYcArgType);
+        outputs.push_back(outputArg_Yc);
 
         auto rnnNodeName = (src->Name().empty() ? ToString(src->Uid()) : ToString(src->Name())) + std::to_string(i);
         functionNode = graph->AddNode(rnnNodeName, "LSTM", "", inputs, outputs);
@@ -1731,9 +1795,10 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
         functionNode->AddAttribute("activations", activations);
         functionNode->AddAttribute("direction", bidirectional ? "bidirectional": "forward");
         functionNode->AddAttribute("hidden_size", (int64_t)hiddenSize);
-        functionNode->AddAttribute("output_sequence", (int64_t)1); // Keeping it 1 because we have the Y output (only).
+        functionNode->AddAttribute("output_sequence", outputSequence);
 
-        layerInputOperandArg = outputArg; // Output of this layer is the input to the next layer in the loop.
+        layerInputOperandArg = outputArg_Y; // Output of this layer is the input to the next layer in the loop.
+        inputNeedsShapeAdapter = true; // To enable shapoe adapter to allow stacking for next layer. 
     }
 
     if (ornnInput.IsOutput())
@@ -1953,4 +2018,42 @@ void CNTKToONNXHelper::CreateRecurrentWeightONNXNodes(ONNXIR::Graph* graph, std:
     CopyTensor(W, dstTensor, &WArgType);
     variableNode->AddAttribute("value", dstTensor);
     variableNodes.emplace(Wcombined, variableNode); // REVIEW: Wcombined is same for all layers and all W and H. Is this correct or will it create trouble creating the graph?
+}
+
+ONNXIR::NodeArg CNTKToONNXHelper::LSTMOutputShapeAdapter(ONNXIR::NodeArg& inputArg, onnx::TypeProto& inputArgType, ONNXIR::Graph* graph,
+    size_t numDirections, size_t hiddenSize, CNTK::DataType outputType, string adapterBasename)
+{
+    // This adapter changes input format (this is output of previous layer) from
+    // [S, numDirections, B, hiddenSize] --> Output format (input to new LSTM layer) [S, B, numDirections*hiddenSize]
+
+    // Transpose 2nd and 3rd axes, i.e. [S, numDirections, B, hiddenSize] --> [S, B, numDirections, hiddenSize]
+    TensorShapeProto inputShape = inputArgType.mutable_tensor_type()->shape();
+    onnx::TypeProto transposeOutputArgType;
+    int inputRank = inputShape.dim_size();
+    std::vector<int64_t> x(inputRank);
+    std::iota(x.begin(), x.end(), 0);
+    std::swap(x[inputRank-2], x[inputRank - 3]); // swap (last but one) and (last but two)
+    for (int index = 0; index < inputRank; index++)
+        transposeOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(inputShape.dim(static_cast<int>(x[index])).dim_value());
+    UpdateONNXType(outputType, transposeOutputArgType);
+    ONNXIR::NodeArg transposeOutputArg(adapterBasename + "_Transpose_Output", &transposeOutputArgType);
+    auto transposeNode = graph->AddNode(adapterBasename + "_Transpose", "Transpose", "", { inputArg }, { transposeOutputArg });
+    transposeNode->AddAttribute("perm", x);
+
+    // Reshape to combine last two axes, i.e. [S, B, numDirections, hiddenSize] --> [S, B, numDirections*hiddenSize]
+    TensorShapeProto lastShape = transposeOutputArgType.mutable_tensor_type()->shape();
+    int lastShapeRank = lastShape.dim_size();
+    if (lastShapeRank != 4)
+        LogicError("Rank of the LSTM output from previous layer must be 4.");
+    onnx::TypeProto reshapeOutputArgType;
+    reshapeOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(lastShape.dim(0).dim_value());
+    reshapeOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(lastShape.dim(1).dim_value());
+    reshapeOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(lastShape.dim(2).dim_value()*lastShape.dim(3).dim_value());
+    UpdateONNXType(outputType, reshapeOutputArgType);
+    ONNXIR::NodeArg reshapeOutputArg(adapterBasename + "_Reshape_Output", &reshapeOutputArgType);
+    auto reshapeNode = graph->AddNode(adapterBasename + "_Reshape", "Reshape", "", { transposeOutputArg }, { reshapeOutputArg });
+    std::vector<int64_t> shape({ 0, 0, -1 });
+    reshapeNode->AddAttribute("shape", shape);
+
+    return reshapeOutputArg;
 }
