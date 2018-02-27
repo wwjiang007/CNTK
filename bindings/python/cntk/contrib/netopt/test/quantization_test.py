@@ -103,7 +103,7 @@ def test_native_convolution(tmpdir):
 
     eval_device = C.cpu()
     model = C.Function.load(model_file, device=eval_device)
-    
+
     # convert to native halide implementation.
     native_binz = qc.convert_to_native_binary_convolution(model)
 
