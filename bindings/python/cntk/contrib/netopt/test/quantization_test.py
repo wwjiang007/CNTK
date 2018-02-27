@@ -68,8 +68,7 @@ def test_binarization():
     assert(all(b.op_name != 'first_convo' for b in blocks))
 
 
-def test_native_convolution(tmpdir):
-  
+def test_native_convolution(tmpdir):  
     # this test needs native binary convolution library built with halide.
     if not C.contrib.netopt.native_convolve_function_registered:     
         pytest.skip()
@@ -96,3 +95,12 @@ def test_native_convolution(tmpdir):
 
     res = native_binz.eval(img_data, device=eval_device)
     assert(len(res) > 0) # evaluation should work with the new model.
+
+def test_resnet_loaded_from_file():
+    model_path = "resnet_model.txt"
+    model = C.load_model(model_path)
+    binz = qc.convert_to_binary_convolution(model)
+
+    filter = (lambda x: type(x) == C.Function and x.op_name == 'BinaryConvolution')
+    functions = C.logging.depth_first_search(binz, filter, depth=0)
+    assert(len(functions) == 21) # all of them have to be converted.
