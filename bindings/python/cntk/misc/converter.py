@@ -55,8 +55,11 @@ def convert(root_func, filter, converter):
         if len(functions_to_convert) > len(functions_to_convert1):
             assert(len(functions_to_convert) - len(functions_to_convert1) == i) # Only one conversion at a time.
             # index = 0 will work for this case, we are picking the first function from the new list.
-        else:
+        elif len(functions_to_convert) == len(functions_to_convert1):
             index = i # here we pick the current index of the for loop.
+        else:
+            raise RuntimeError("The conversion adds another possible conversion(s). Stopping infinite conversions.")
+
         function_to_convert = functions_to_convert1[index]
         converted = converter(function_to_convert)
 
