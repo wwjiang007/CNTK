@@ -108,7 +108,7 @@ def test_native_convolution(tmpdir):
     native_binz = qc.convert_to_native_binary_convolution(model)
 
     functions = C.logging.graph.depth_first_search(
-                native_binz, (lambda x : type(x) == C.Function and x.op_name =='BinaryConvolveOp') , depth = 0)    
+                native_binz, (lambda x : type(x) == C.Function and x.op_name =='BinaryConvolveOp') , depth = 0)
     assert(len(functions) == 3)
 
     img_data = np.reshape(dat, (1, 1, 28, 28))
