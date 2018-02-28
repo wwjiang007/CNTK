@@ -1075,6 +1075,13 @@ namespace CNTK
                 {
                     distLearner->SetAsMetricAggregator();
                 }
+                else
+                {
+                    if (dynamic_pointer_cast<QuantizedDistributedCommunicator>(distLearner->GetCommunicator()) != nullptr)
+                    {
+                        InvalidArgument("Learners with QuantizedDistributedCommunicator is not supported in a multiple learner distributed training scenarios.");
+                    }
+                }
 
                 // Use only one of the learners marked as MetricAggregator to aggregate loss and eval.
                 if (distLearner->IsMetricAggregator())
