@@ -103,7 +103,7 @@ def _filter(convolution_block):
         return False
 
 def test_binarization():
-    z = _create_convolution_model_with_skip_level_links()
+    z = _create_convolution_model()
     binz = qc.convert_to_binary_convolution(z)
 
     blocks = C.logging.graph.depth_first_search(
