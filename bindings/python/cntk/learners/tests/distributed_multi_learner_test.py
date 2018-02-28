@@ -76,7 +76,7 @@ def mpi_worker_multi_learner(working_dir, checkpoint_dir, mb_source, gpu):
 
 
 #MB_SOURCES = ["numpy"]
-MB_SOURCES = ["ctf_utterance",  "ctf_frame"]
+MB_SOURCES = ["ctf_utterance"]
 @pytest.mark.parametrize("mb_source", MB_SOURCES)
 def test_multi_learner_bmuf_correct_metrics_averaging(tmpdir, device_id, mb_source):
     if platform.system() == 'Linux':
