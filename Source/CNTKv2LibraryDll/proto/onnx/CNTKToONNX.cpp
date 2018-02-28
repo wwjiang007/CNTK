@@ -104,6 +104,9 @@ namespace CNTK
             std::set<FunctionPtr>& visited,
             std::unordered_map<Variable, Variable>& compositeOutputsMap);
 
+        // Remove it after testing.
+        static void CNTKToONNXHelper::PrintNDArrayView(const NDArrayViewPtr src);
+
         //
         // Copy the content of NDArrayView to TensorProto, and do the needed
         // convergence.
@@ -216,8 +219,8 @@ namespace CNTK
         // weight and bias matrices for each recurrent op layer.
         //
         static std::tuple<std::vector<NDArrayViewPtr>, std::vector<NDArrayViewPtr>, std::vector<NDArrayViewPtr> >
-            SplitOptimzedRnnWtoIndivMats(const Matrix<float>& WbigIn, size_t numLayers, size_t inputSize, size_t hiddenSize,
-                                         bool bidirectional, wstring recurrentOp = L"lstm");
+            SplitOptimzedRnnWtoIndivMats(Matrix<float>& WbigIn, size_t numLayers, size_t inputSize, size_t hiddenSize,
+                bool bidirectional, wstring recurrentOp = L"lstm");
 
         //
         // Extracts RNN weight matrices from OptimizedRNNStack's input combined weight matrix.
@@ -319,6 +322,37 @@ void CNTKToONNXHelper::Copy(const FunctionPtr& src, ONNXIR::Graph* dst)
     CreateNode(src, dst, functionNodes, variableNodes, compositeOutputsMap);
 }
 
+void CNTKToONNXHelper::PrintNDArrayView(const NDArrayViewPtr src)
+{
+    auto dataType = src->GetDataType();
+    auto srcTemp = src->DeepClone();
+    auto srcShape = srcTemp->Shape();
+    auto totalSize = srcShape.TotalSize();
+
+    // This is our own copy so move it to the CPU.
+    srcTemp->ChangeDevice(DeviceDescriptor::CPUDevice());
+
+    switch (dataType)
+    {
+    case DataType::Float:
+    {
+        auto data = srcTemp->DataBuffer<float>();
+        for (size_t index = 0; index < totalSize; index++)
+            printf("%f", data[index]);
+        break;
+    }
+    case DataType::Double:
+    {
+        auto data = srcTemp->DataBuffer<double>();
+        for (size_t index = 0; index < totalSize; index++)
+            printf("%f", data[index]);
+        break;
+    }
+    default:
+        NOT_IMPLEMENTED;
+    }
+}
+
 void CNTKToONNXHelper::CopyTensor(const NDArrayViewPtr src, onnx::TensorProto& dst, onnx::TypeProto *inputArgType /*=nullptr*/)
 {
     auto dataType = src->GetDataType();
@@ -394,11 +428,11 @@ onnx::TypeProto CNTKToONNXHelper::ToTypeProto(const NDShape& shape, bool hasBatc
             "the model with test data at least once and try saving it again.");
     }
 
-    if (hasBatchAxis)
-        newShape.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(1);
-
     // Sequence dimension should be before batch axis after we reverse the shape (reversal happens below).
     if (hasSequenceAxis)
+        newShape.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_param("None");
+
+    if (hasBatchAxis)
         newShape.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(1);
 
     auto dimensions = shape.Dimensions();
@@ -1405,7 +1439,7 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
             {
                 auto outputShape = (NDShape)src->Attributes()[L"outputShape"].Value<NDShape>();
                 node->AddAttribute("output_shape", ToINTS(outputShape, src->Inputs()[1].HasBatchAxis()));
-            }            
+            }
             PutAutopadOrPadAttrInNode(node, autoPadding, kernelShape);
         }
         else if (src->OpName() == L"Pooling")
@@ -1691,13 +1725,33 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
     srcTemp->ChangeDevice(DeviceDescriptor::CPUDevice());
     float* Wdata = srcTemp->WritableDataBuffer<float>();
     // ?? Does Matrix ctor below make a copy of the buffer. If yes, then we don't need to do DeepClone above.
-    Matrix<float> Wm(WcombinedShape[0], WcombinedShape[1], Wdata, 0); // 0 denotes CPU.
-
-    // Step 2: Extract individual weight and bias matrices for each layer from the big weight matrix.
+    Matrix<float> Wm(WcombinedShape[0], WcombinedShape[1], Wdata, -1, MatrixType::DENSE, MatrixFormat::matrixFormatDense); // -1 denotes CPU. // matrixFormatDenseRowMajor
+    printf("\n Wm--------------\n");
+    Wm.Print();
+    printf("\n ---------------------------------\n");
+                                                                      // Step 2: Extract individual weight and bias matrices for each layer from the big weight matrix.
     std::vector<NDArrayViewPtr> W, R, B;
     std::tie<std::vector<NDArrayViewPtr>, std::vector<NDArrayViewPtr>, std::vector<NDArrayViewPtr> >
         (W, R, B) = SplitOptimzedRnnWtoIndivMats(Wm, numLayers, inputSize, hiddenSize, bidirectional, recurrentOp);
 
+    /*printf("\n W[0] final--------------\n");
+    PrintNDArrayView(W[0]);
+    printf("--------------------------------\n");
+    printf("\n W[1] final--------------\n");
+    PrintNDArrayView(W[1]);
+    printf("--------------------------------\n");
+    printf("\n R[0] final--------------\n");
+    PrintNDArrayView(R[0]);
+    printf("--------------------------------\n");
+    printf("\n R[1] final--------------\n");
+    PrintNDArrayView(R[1]);
+    printf("--------------------------------\n");
+    printf("\n B0] final--------------\n");
+    PrintNDArrayView(B[0]);
+    printf("--------------------------------\n");
+    printf("\n B[1] final--------------\n");
+    PrintNDArrayView(B[1]);
+    printf("--------------------------------\n");*/
     // Step 3: Create ONNX nodes mirroring the implementation of OptimizedRNNStack.
     ONNXIR::Node* functionNode;
     bool inputNeedsShapeAdapter(false);
@@ -1714,7 +1768,12 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
     std::swap(x[opRank - 2], x[opRank - 3]); // swap (last but one) annd (last but two)
     onnx::TypeProto ornnOutputArgType;
     for (int index = 0; index < opRank; index++)
-        ornnOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(outArgShape.dim(x[index]).dim_value());
+    {
+        if (outArgShape.dim(x[index]).has_dim_param()) // For sequence axis, which is a dynamic axis.
+            ornnOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_param(outArgShape.dim(x[index]).dim_param());
+        else
+            ornnOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(outArgShape.dim(x[index]).dim_value());
+    }
     UpdateONNXType(ornnOutput.GetDataType(), ornnOutputArgType);
 
     ONNXIR::NodeArg layerInputOperandArg(ToString(ornnInput.Uid()), &ornnInputArgType);
@@ -1736,12 +1795,21 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
 
         // Input weight tensor W
         auto WArgName = ToString(Wcombined.Uid()) + "_W_" + std::to_string(i);
+        printf("\n Layer %zu - W After--------------\n", i);
+        PrintNDArrayView(W[i]);
+        printf("--------------------------------\n");
         CreateRecurrentWeightONNXNodes(graph, variableNodes, Wcombined, inputs, W[i], WArgName);
         // Input weight tensor R (equivalent to CNTK's H)
         auto RArgName = ToString(Wcombined.Uid()) + "_R_" + std::to_string(i);
+        printf("\n Layer %zu - R After--------------\n", i);
+        PrintNDArrayView(R[i]);
+        printf("--------------------------------\n");
         CreateRecurrentWeightONNXNodes(graph, variableNodes, Wcombined, inputs, R[i], RArgName);
         // Input weight tensor B
         auto BArgName = ToString(Wcombined.Uid()) + "_B_" + std::to_string(i);
+        printf("\n Layer %zu - B After--------------\n", i);
+        PrintNDArrayView(B[i]);
+        printf("--------------------------------\n");
         CreateRecurrentWeightONNXNodes(graph, variableNodes, Wcombined, inputs, B[i], BArgName);
         // Create dummy input arg for optional arg sequence_lens
         auto seqLenArgName = ToString(Wcombined.Uid()) + "_seq_len_" + std::to_string(i);
@@ -1787,13 +1855,13 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
         auto rnnNodeName = (src->Name().empty() ? ToString(src->Uid()) : ToString(src->Name())) + std::to_string(i);
         functionNode = graph->AddNode(rnnNodeName, "LSTM", "", inputs, outputs);
 
-        std::vector<std::string> singleDirectionActivation({"Sigmoid", "Tanh", "Tanh"}); // REVIEW: Check this is the order.
+        std::vector<std::string> singleDirectionActivation({ "Sigmoid", "Tanh", "Tanh" }); // REVIEW: Check this is the order.
         std::vector<std::string> activations;
         activations.insert(activations.end(), singleDirectionActivation.begin(), singleDirectionActivation.end());
         if (bidirectional)
             activations.insert(activations.end(), singleDirectionActivation.begin(), singleDirectionActivation.end());
         functionNode->AddAttribute("activations", activations);
-        functionNode->AddAttribute("direction", bidirectional ? "bidirectional": "forward");
+        functionNode->AddAttribute("direction", bidirectional ? "bidirectional" : "forward");
         functionNode->AddAttribute("hidden_size", (int64_t)hiddenSize);
         functionNode->AddAttribute("output_sequence", outputSequence);
 
@@ -1808,8 +1876,8 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
     return functionNode;
 }
 
-std::tuple<std::vector<NDArrayViewPtr>, std::vector<NDArrayViewPtr>, std::vector<NDArrayViewPtr> > 
-CNTKToONNXHelper::SplitOptimzedRnnWtoIndivMats(const Matrix<float>& WbigIn,
+std::tuple<std::vector<NDArrayViewPtr>, std::vector<NDArrayViewPtr>, std::vector<NDArrayViewPtr> >
+CNTKToONNXHelper::SplitOptimzedRnnWtoIndivMats(Matrix<float>& WbigIn,
     size_t numLayers, size_t inputSize, size_t hiddenSize, bool bidirectional, wstring recurrentOp)
 {
     std::vector<NDArrayViewPtr> onnxInputTensor(3);
@@ -1826,12 +1894,15 @@ CNTKToONNXHelper::SplitOptimzedRnnWtoIndivMats(const Matrix<float>& WbigIn,
     std::vector<Matrix<float> >  R;
     std::vector<Matrix<float> >  B;
 
-    // Make our own copy of matrix on CPU.
-    Matrix<float> Wbig(WbigIn, -1); // _1 is DEVICE_ID for CPU.
-
-    // Step 1: Flatten big W matrix to a row vector.
-    size_t numElements = WbigIn.GetNumElements();
-    Wbig.Reshape(1, numElements); 
+    // The next two operations will make a deep copy and flatten the matrix
+    // in the same order as the Python matrix Wbig (row-major).
+    Matrix<float> Wbig = WbigIn.Transpose(); // Deep copy.
+    Wbig.Reshape(1, WbigIn.GetNumElements()); 
+    //// Matrix<float> Wbig(1, WbigIn.GetNumElements(), -1, MatrixType::DENSE, MatrixFormat::matrixFormatDense); // -1 is DEVICE_ID for CPU.
+    //Wbig.SetValue(Wbig.Reshaped(1, WbigIn.GetNumElements())); //Deep copy, preserving row-major order of the underlying buffer.
+    printf("\n Wbig flattened.--------------\n");
+    Wbig.Print();
+    printf("\n ---------------------------------\n");
 
     // Step 2: Extracting the weights W and R from big weight matrix (including backward ones in case of bidirectional op).
     size_t offset(0);
@@ -1839,22 +1910,34 @@ CNTKToONNXHelper::SplitOptimzedRnnWtoIndivMats(const Matrix<float>& WbigIn,
     for (size_t i = 0; i < numLayers; ++i)
     {
         Matrix<float> fW = GetWeightMatFromOrnnBigW(Wbig, offset, layerInputSize, hiddenSize, numGates, recurrentOp);
+        printf("\nLayer %zu - fW--------\n", i);
+        fW.Print();
+        printf("\n---------------------\n");
         offset += layerInputSize * hiddenSize * numGates;
         W.push_back(Matrix<float>(fW, -1));
         Matrix<float> fR = GetWeightMatFromOrnnBigW(Wbig, offset, hiddenSize, hiddenSize, numGates, recurrentOp);
         fR = GetWeightMatFromOrnnBigW(Wbig, offset, hiddenSize, hiddenSize, numGates, recurrentOp);
         offset += hiddenSize * hiddenSize * numGates;
         R.push_back(Matrix<float>(fR, -1));
+        printf("\nLayer %zu - fR--------\n", i);
+        fR.Print();
+        printf("\n---------------------\n");
 
         // Matrix<float> bW(-1), bR(-1); // deviceId = 0 for CPU.
         if (bidirectional)
         {
             Matrix<float> bW = GetWeightMatFromOrnnBigW(Wbig, offset, layerInputSize, hiddenSize, numGates, recurrentOp);
+            printf("\n Layer %zu - bW--------\n", i);
+            bW.Print();
+            printf("\n ---------------------\n");
             offset += layerInputSize * hiddenSize * numGates;
             W.push_back(Matrix<float>(bW, -1));
             Matrix<float> bR = GetWeightMatFromOrnnBigW(Wbig, offset, hiddenSize, hiddenSize, numGates, recurrentOp);
             offset += hiddenSize * hiddenSize * numGates;
             R.push_back(Matrix<float>(bR, -1));
+            printf("\n Layer %zu - bR--------\n", i);
+            bR.Print();
+            printf("\n ---------------------\n");
         }
 
         layerInputSize = hiddenSize * numDirections;
@@ -1867,6 +1950,9 @@ CNTKToONNXHelper::SplitOptimzedRnnWtoIndivMats(const Matrix<float>& WbigIn,
     for (size_t i = 0; i < numLayers; ++i)
     {
         Matrix<float> fB = GetBiasMatFromOrnnBigW(Wbig, offset, hiddenSize, numGates, recurrentOp);
+        printf("Layer %zu - fB--------\n", i);
+        fB.Print();
+        printf("---------------------\n");
         offset += 2 * hiddenSize * numGates;
         B.push_back(Matrix<float>(fB, -1));
         if (bidirectional)
@@ -1874,6 +1960,9 @@ CNTKToONNXHelper::SplitOptimzedRnnWtoIndivMats(const Matrix<float>& WbigIn,
             Matrix<float> bB = GetBiasMatFromOrnnBigW(Wbig, offset, hiddenSize, numGates, recurrentOp);
             offset += 2 * hiddenSize * numGates;
             B.push_back(Matrix<float>(bB, -1));
+            printf("Layer %zu - bB--------\n", i);
+            bB.Print();
+            printf("---------------------\n");
         }
     }
 
@@ -1884,18 +1973,35 @@ CNTKToONNXHelper::SplitOptimzedRnnWtoIndivMats(const Matrix<float>& WbigIn,
     // Step 5: Convert bias matrices into NDArrayView;
     std::vector<NDArrayViewPtr> Bonnx = ToRnnBiasPerLayerOnnxFormat(B, numLayers, numDirections, hiddenSize, numGates);
 
-    return std::make_tuple(Wonnx, Ronnx, Bonnx);
+    /*printf("\n Bonnx[0] outside--------------\n");
+    PrintNDArrayView(Bonnx[0]);
+    printf("--------------------------------\n");
+
+    printf("\n Bonnx[1] outside--------------\n");
+    PrintNDArrayView(Bonnx[1]);
+    printf("--------------------------------\n");
+*/
+
+    return std::make_tuple(std::move(Wonnx), std::move(Ronnx), std::move(Bonnx));
 }
 
 Matrix<float> CNTKToONNXHelper::GetWeightMatFromOrnnBigW(Matrix<float>& Wbig, size_t offset,
     size_t layerInputSize, size_t layerOutputSize, size_t numGates, wstring recurrentOp)
 {
-    Matrix<float> W0 = Wbig.ColumnSlice(offset, layerInputSize*layerOutputSize*numGates);
-    W0.Reshape(layerOutputSize*numGates, layerInputSize);
-    auto W = W0.Transpose(); // Have to do this because Matrix::InplaceTranspose is not implemented.
+    //Matrix<float> W0 = Wbig.ColumnSlice(offset, layerInputSize*layerOutputSize*numGates);
+    Matrix<float> W0(-1);
+    W0.SetValue(Wbig.ColumnSlice(offset, layerInputSize*layerOutputSize*numGates));
+    W0.Reshape(layerInputSize, layerOutputSize*numGates);
+    //printf("\n---------W0--------\n");
+    //W0.Print();
+    //printf("---------------------\n");
+    // auto W = W0.Transpose(); // Confirmed: This is a deep copy. Have to do this because Matrix::InplaceTranspose is not implemented.
     if (recurrentOp == L"lstm") // rnnReLU and rnnTanh have one gate so reordering is moot.
-        InplaceAdjustGateOrder(W, layerOutputSize);
-    return W;
+        InplaceAdjustGateOrder(W0, layerOutputSize);
+    //printf("\n---------W0 rearranged--------\n");
+    //W0.Print();
+    //printf("---------------------\n");
+    return W0;
 }
 
 Matrix<float> CNTKToONNXHelper::GetBiasMatFromOrnnBigW(Matrix<float>& Wbig, size_t offset,
@@ -1903,18 +2009,36 @@ Matrix<float> CNTKToONNXHelper::GetBiasMatFromOrnnBigW(Matrix<float>& Wbig, size
 {
     Matrix<float> b(1, 2 * hiddenSize*numGates, -1);
 
-    Matrix<float> b1 = Wbig.ColumnSlice(offset, hiddenSize*numGates);
+    Matrix<float> b1(-1), b2(-1);
+    b1.SetValue(Wbig.ColumnSlice(offset, hiddenSize*numGates));
+    /*printf("\n---------b1--------\n");
+    b1.Print();
+    printf("\n---------------------\n");*/
     auto nextoffset = offset + hiddenSize * numGates; // Note that 'offset' still must be updated outside. Not returning offset back, say through a tuple, because 
                                                       // that removes return value optimization (RVO) on the output argument of this method.
-    Matrix<float> b2 = Wbig.ColumnSlice(nextoffset, hiddenSize*numGates);
-
+    b2.SetValue(Wbig.ColumnSlice(nextoffset, hiddenSize*numGates));
+    /*printf("\n---------b2--------\n");
+    b2.Print();
+    printf("\n---------------------\n");*/
     // Creating bias vector b as [W_b, R_b]. Creating these values as done in
     // optimized_rnnstack_converter.py. W_bias is b1 + b2. R_bias is just zeros.
     b1.AssignSumOf(b1, b2);
+    /*printf("\n---------b1 + b2--------\n");
+    b1.Print();
+    printf("\n---------------------\n");*/
     if (recurrentOp == L"lstm") // rnnReLU and rnnTanh have only one gates so reordering is moot.
         InplaceAdjustGateOrder(b1, hiddenSize);
+    /*printf("\n---------b1 + b2 - rearranged--------\n");
+    b1.Print();
+    printf("\n---------------------\n");*/
     b.SetColumnSlice(b1, 0, hiddenSize * numGates);
+    /*printf("\n---------b with only bias for W (first half)--------\n");
+    b.Print();
+    printf("\n---------------------\n");*/
     b.SetColumnSlice(Matrix<float>::Zeros(1, hiddenSize * numGates, -1), hiddenSize * numGates, hiddenSize * numGates);
+    /*printf("\n---------Final b (second half zeros)--------\n");
+    b.Print();
+    printf("\n---------------------\n");*/
 
     return b;
 }
@@ -1925,13 +2049,14 @@ void CNTKToONNXHelper::InplaceAdjustGateOrder(Matrix<float>& W, size_t hiddenSiz
 
     size_t offset(0);
 
-    auto Wi = W.ColumnSlice(offset, hiddenSize);
+    Matrix<float> Wi(-1), Wf(-1), Wc(-1), Wo(-1);
+    Wi.SetValue(W.ColumnSlice(offset, hiddenSize));
     offset += hiddenSize;
-    auto Wf = W.ColumnSlice(offset, hiddenSize);
+    Wf.SetValue(W.ColumnSlice(offset, hiddenSize));
     offset += hiddenSize;
-    auto Wc = W.ColumnSlice(offset, hiddenSize);
+    Wc.SetValue(W.ColumnSlice(offset, hiddenSize));
     offset += hiddenSize;
-    auto Wo = W.ColumnSlice(offset, hiddenSize);
+    Wo.SetValue(W.ColumnSlice(offset, hiddenSize));
 
     offset = 0;
     W.SetColumnSlice(Wi, offset, hiddenSize);
@@ -1948,7 +2073,7 @@ std::vector<NDArrayViewPtr> CNTKToONNXHelper::ToRnnWeightPerLayerOnnxFormat(std:
 {
     std::vector<NDArrayViewPtr> Wonnx;
     // First layer input size is inputSize. Other layers' input size is numDirections*hiddenSize.
-    size_t layerInputSize(inputSize); 
+    size_t layerInputSize(inputSize);
     for (size_t i = 0; i < numLayers; ++i)
     {
         // Here we create a currLayerWeightMatrix which has 3D tensor in a 2D matrix data buffer.
@@ -1962,8 +2087,12 @@ std::vector<NDArrayViewPtr> CNTKToONNXHelper::ToRnnWeightPerLayerOnnxFormat(std:
             currLayerWeightMatrix.SetColumnSlice(temp, offset, layerInputSize);
             offset += layerInputSize;
         }
-        Wonnx.push_back(MakeSharedObject<NDArrayView>(::CNTK::DataType::Float, NDShape({ numDirections, hiddenSize*numGates, layerInputSize }),
-            (void*)currLayerWeightMatrix.Data(), currLayerWeightMatrix.BufferSize(), DeviceDescriptor::CPUDevice()));
+        NDArrayView currLayerWeightNDArray(::CNTK::DataType::Float, NDShape({ numDirections, hiddenSize*numGates, layerInputSize }),
+            (void*)currLayerWeightMatrix.Data(), currLayerWeightMatrix.BufferSize(), DeviceDescriptor::CPUDevice());
+        Wonnx.push_back(currLayerWeightNDArray.DeepClone(DeviceDescriptor::CPUDevice()));
+        // Wonnx.push_back(std::make_shared<NDArrayView>(currLayerWeightNDArray));
+        /*Wonnx.push_back(MakeSharedObject<NDArrayView>(::CNTK::DataType::Float, NDShape({ numDirections, hiddenSize*numGates, layerInputSize }),
+            (void*)currLayerWeightMatrix.Data(), currLayerWeightMatrix.BufferSize(), DeviceDescriptor::CPUDevice()));*/
 
         if (updateInputSizeWithEachLayer)
         {
@@ -1994,14 +2123,23 @@ std::vector<NDArrayViewPtr> CNTKToONNXHelper::ToRnnBiasPerLayerOnnxFormat(std::v
             currLayerBiasMatrix.SetColumnSlice(temp, offset, 1);
             ++offset;
         }
-        auto finalBiasMatrix = currLayerBiasMatrix.Transpose();
-        Bonnx.push_back(MakeSharedObject<NDArrayView>(::CNTK::DataType::Float, NDShape({ numDirections, 2*hiddenSize*numGates }),
-            (void*)finalBiasMatrix.Data(), finalBiasMatrix.BufferSize(), DeviceDescriptor::CPUDevice()));
+        // auto finalBiasMatrix = currLayerBiasMatrix.Transpose(); // Deep copy
+        /*printf("\n currLayerBiasMatrix Before--------------\n");
+        currLayerBiasMatrix.Print();
+        printf("\n--------------------------------\n");*/
+        NDArrayView currLayerBiasNDArray(::CNTK::DataType::Float, NDShape({ numDirections, 2 * hiddenSize*numGates }),
+            (void*)currLayerBiasMatrix.Data(), currLayerBiasMatrix.BufferSize(), DeviceDescriptor::CPUDevice());
+        Bonnx.push_back(currLayerBiasNDArray.DeepClone(DeviceDescriptor::CPUDevice()));
+        //Bonnx.push_back(MakeSharedObject<NDArrayView>(::CNTK::DataType::Float, NDShape({ numDirections, 2 * hiddenSize*numGates }),
+        //    (void*)finalBiasMatrix.Data(), finalBiasMatrix.BufferSize(), DeviceDescriptor::CPUDevice()));
+        /*printf("\n currLayerBiasMatrix After--------------\n");
+        PrintNDArrayView(Bonnx[Bonnx.size() - 1]);
+        printf("\n--------------------------------\n");*/
     }
     return Bonnx;
 }
 
-void CNTKToONNXHelper::CreateRecurrentWeightONNXNodes(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes, 
+void CNTKToONNXHelper::CreateRecurrentWeightONNXNodes(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
     const Variable& Wcombined, std::vector<ONNXIR::NodeArg>& inputs, NDArrayViewPtr W, string WArgName)
 {
     auto WArgType = ToTypeProto(W->Shape(), false, false, false); // Last arg is false because we don't want shape reversal here.
@@ -2015,6 +2153,9 @@ void CNTKToONNXHelper::CreateRecurrentWeightONNXNodes(ONNXIR::Graph* graph, std:
     varOutputs.push_back({ WArg });
     ONNXIR::Node* variableNode = graph->AddNode(WArgName, "Constant", "", varInputs, varOutputs);
     onnx::TensorProto dstTensor;
+    /*printf("\n Creating weight and bias ONNX nodes After--------------\n");
+    PrintNDArrayView(W);
+    printf("--------------------------------\n");*/
     CopyTensor(W, dstTensor, &WArgType);
     variableNode->AddAttribute("value", dstTensor);
     variableNodes.emplace(Wcombined, variableNode); // REVIEW: Wcombined is same for all layers and all W and H. Is this correct or will it create trouble creating the graph?
@@ -2032,9 +2173,14 @@ ONNXIR::NodeArg CNTKToONNXHelper::LSTMOutputShapeAdapter(ONNXIR::NodeArg& inputA
     int inputRank = inputShape.dim_size();
     std::vector<int64_t> x(inputRank);
     std::iota(x.begin(), x.end(), 0);
-    std::swap(x[inputRank-2], x[inputRank - 3]); // swap (last but one) and (last but two)
+    std::swap(x[inputRank - 2], x[inputRank - 3]); // swap (last but one) and (last but two)
     for (int index = 0; index < inputRank; index++)
-        transposeOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(inputShape.dim(static_cast<int>(x[index])).dim_value());
+    {
+        if (inputShape.dim(static_cast<int>(x[index])).has_dim_param()) // For sequence axis, which is a dynamic axis.
+            transposeOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_param(inputShape.dim(static_cast<int>(x[index])).dim_param());
+        else
+            transposeOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(inputShape.dim(static_cast<int>(x[index])).dim_value());
+    }
     UpdateONNXType(outputType, transposeOutputArgType);
     ONNXIR::NodeArg transposeOutputArg(adapterBasename + "_Transpose_Output", &transposeOutputArgType);
     auto transposeNode = graph->AddNode(adapterBasename + "_Transpose", "Transpose", "", { inputArg }, { transposeOutputArg });
@@ -2045,9 +2191,17 @@ ONNXIR::NodeArg CNTKToONNXHelper::LSTMOutputShapeAdapter(ONNXIR::NodeArg& inputA
     int lastShapeRank = lastShape.dim_size();
     if (lastShapeRank != 4)
         LogicError("Rank of the LSTM output from previous layer must be 4.");
+    if (lastShape.dim(2).has_dim_param() || lastShape.dim(3).has_dim_param())
+        LogicError("Sequence axis cannot be amongst the last two axis. It must be the first one.");
     onnx::TypeProto reshapeOutputArgType;
-    reshapeOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(lastShape.dim(0).dim_value());
-    reshapeOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(lastShape.dim(1).dim_value());
+    if (lastShape.dim(0).has_dim_param())
+        reshapeOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_param(lastShape.dim(0).dim_param());
+    else
+        reshapeOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(lastShape.dim(0).dim_value());
+    if (lastShape.dim(1).has_dim_param())
+        reshapeOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_param(lastShape.dim(1).dim_param());
+    else
+        reshapeOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(lastShape.dim(1).dim_value());
     reshapeOutputArgType.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(lastShape.dim(2).dim_value()*lastShape.dim(3).dim_value());
     UpdateONNXType(outputType, reshapeOutputArgType);
     ONNXIR::NodeArg reshapeOutputArg(adapterBasename + "_Reshape_Output", &reshapeOutputArgType);
