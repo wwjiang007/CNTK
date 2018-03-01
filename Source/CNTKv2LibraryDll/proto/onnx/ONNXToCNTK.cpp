@@ -9,6 +9,7 @@
 #include "Operators.h"
 #include <algorithm>
 #include <iostream>
+#include "RNNHelper.h"
 
 using namespace ONNXIR;
 using namespace CNTK;
@@ -104,6 +105,9 @@ namespace CNTK
 
         static string GetNamedAttributeAsString(const Node *node, const string &attributeName);
         static string GetNamedAttributeAsString(const Node *node, const string &attributeName, const string& defaultValue);
+
+        static std::vector<std::string> GetNamedAttributeAsStringVec(const Node *node, const string &attributeName,
+            const std::vector<std::string> &defaultValues);
 
         static std::vector<int64_t> GetNamedAttributeAsInt64Vec(const Node *node, const string &attributeName);
         static std::vector<int64_t> GetNamedAttributeAsInt64Vec(const Node *node, const string &attributeName, const std::vector<int64_t>& defaultValue);
@@ -560,19 +564,7 @@ template<typename DType>
 Constant CreateConstantWithRawData(DType *data,const  NDShape &shape, const std::string &name, 
     const DeviceDescriptor& computeDevice)
 {
-    DataType dataType;
-    if (typeid(DType) == typeid(float))
-    {
-        dataType = DataType::Float;
-    }
-    else if (typeid(DType) == typeid(double))
-    {
-        dataType = DataType::Double;
-    }
-    else
-    {
-        CNTK::LogicError("CreateConstantWithRawData is called with unsupported template parameter type.");
-    }
+    DataType dataType = AsDataType<DType>();
      
     int totalSize = shape.TotalSize();
     NDArrayViewPtr dstFinal(new NDArrayView(dataType, shape, data, 
@@ -619,17 +611,20 @@ std::vector<Variable> CreateRNNConstant(
     }
     }
 
+    // index to LSTM inputs as specified in the ONNX document. 
+    // https://github.com/onnx/onnx/blob/master/docs/Operators.md#inputs-3---8
     if (parentONNXOpName == "LSTM")
     {
         switch (index)
         {
-        case 0:
+        case LSTMInputIndexX:
             // X, should not come to here
             return inputs;
-        case 1:
-        case 2:
+        case LSTMInputIndexW:
+        case LSTMInputIndexH:
             // W, R:
         {
+            // see ONNX spec for the tensor shape
             int num_directions = valueProto.dims(0);
             size_t rows = valueProto.dims(1);
             size_t cols = valueProto.dims(2);
@@ -674,9 +669,10 @@ std::vector<Variable> CreateRNNConstant(
             }
             return inputs;
         }
-        case 3:
+        case LSTMInputIndexB:
             // B
         {
+            // see ONNX spec for the tensor shape
             int num_directions = valueProto.dims(0);
             int cell_size = valueProto.dims(1) / 8;
             // there is an ONNX spec issue with bias input. It states that 
@@ -688,7 +684,7 @@ std::vector<Variable> CreateRNNConstant(
             NDShape weightShape({ (size_t)(4 * cell_size) });
             for (int dir = 0; dir < num_directions; dir++)
             {
-                std::string nodeName = name + "_B_" + (char)dir;
+                std::string nodeName = name + std::string(1, (char)dir) + LSTMInputBiasNameHint;
                 int totalSizePerDirection = 4 * cell_size;
                 float *data = new float[totalSizePerDirection];
                 for (size_t targetIndex = 0; targetIndex < totalSizePerDirection; targetIndex++)
@@ -721,12 +717,11 @@ std::vector<Variable> CreateRNNConstant(
             }
             return inputs;
         }
-        // case 4:
-            // TODO:
-            // sequence_lens
-            break;
-        case 5:
-        case 6:
+        case LSTMInputIndexsequence_lens:
+            // sequence length is treated as free dimension
+            return inputs;
+        case LSTMInputIndexinitial_h:
+        case LSTMInputIndexinitial_c:
         {
             // initial_h, initial_c
             int num_directions = valueProto.dims(0);
@@ -743,7 +738,12 @@ std::vector<Variable> CreateRNNConstant(
             NDShape weightShape({ (size_t)(cell_size) });
             for (int dir = 0; dir < num_directions; dir++)
             {
-                std::string nodeName = name + "_initial_" + (index == 5 ? "h_" : "c_") + (char)dir;
+                std::string nodeName = name + std::string(1, (char)dir);
+                if (index == 5) 
+                    nodeName += LSTMInputInitialHNameHint;
+                else
+                    nodeName += LSTMInputInitialCNameHint;
+
                 float *data = new float[cell_size];
                 for (size_t targetIndex = 0; targetIndex < cell_size; targetIndex++)
                 {
@@ -756,11 +756,31 @@ std::vector<Variable> CreateRNNConstant(
             return inputs;
         }
         break;
-        case 7:
-            // TODO:
+        case LSTMInputIndexP:
             // P
-        default:
+        {
+            int num_directions = valueProto.dims(0);
+            int cell_size = valueProto.dims(1) / 3;
+            for (int dir = 0; dir < num_directions; dir++)
+                for (int i = 0; i < 3; i++)
+                {
+                    std::string nodeName = name + ((i == 0) ? "_i" : ((i == 1) ? "_o" : "_f")) + 
+                        std::string(1, (char)dir) + LSTMInputPeepholeNameHint;
+                    float *data = new float[cell_size];
+                    NDShape weightShape({ (size_t)(cell_size) });
+                    for (size_t targetIndex = 0; targetIndex < cell_size; targetIndex++)
+                    {
+                        data[targetIndex] = valueProto.float_data()[(dir * 3 + i) * cell_size + targetIndex];
+                    }
+
+                    Constant constant = CreateConstantWithRawData(data, weightShape, nodeName, computeDevice);
+                    inputs.push_back(constant);
+                }
             return inputs;
+        }
+        break;
+        default:
+            CNTK::LogicError("CreateRNNConstant received unepxpeted index: %d", index);
         }
     }
     else
@@ -812,12 +832,16 @@ std::vector<Variable> ONNXToCNTKHelper::CreateRNNLeafVariableOrConstant(const No
 
     // std::string nodeName = nodeArg->Name();
     std::vector<Axis> dynamicAxes({ Axis::OperandSequenceAxis() , Axis::DefaultBatchAxis()});
+
+
     if (parentONNXOpName == "LSTM")
     {
+        // index to LSTM inputs as specified in the ONNX document. 
+        // https://github.com/onnx/onnx/blob/master/docs/Operators.md#inputs-3---8
         int inputIndex = CalculateNodeArgInputIndex(nodeArg, parentNode);
         switch (inputIndex)
         {
-        case 0:
+        case LSTMInputIndexX:
             // X: `[seq_length, batch_size, input_size]`.
         {
             Variable inputVariable;
@@ -831,29 +855,15 @@ std::vector<Variable> ONNXToCNTKHelper::CreateRNNLeafVariableOrConstant(const No
             }
             return std::vector<Variable>({ constructedNodeArgVariableMap[nodeArg->Name()]});
         }
-        case 1:
-        case 2:
-        case 3:
-            // W, R, B are direction related, need to split into 2 input variables.
-            // they have to be constant for now.
-            // TODO: need add a dummy to hold the slot so that so that when LSTM is built we know which once is which.
-            // NOT_IMPLEMENTED;
-        case 4:
-            // sequence_lens. it is optioned out, otherwise it will endup as a Constant
-            // return a dummy constant for now
-            // TODO: need add a dummy
-            // return std::vector<Variable>({ InputVariable(NDShape(), DataType::Float, ToWString(nodeArg->Name()), dynamicAxes) });
-        case 5:
-        case 6:
-            // initial_h and initial_c
-            // they have to be constant for now.
-            // TODO: need add a dummy
-            // NOT_IMPLEMENTED;
-        case 7:
-            // P
-            // TODO: need add a dummy
-            // NOT_IMPLEMENTED;
-            return std::vector<Variable>();
+        // other inputs shall be ONNX constant node and be created as CNTK Constant in CreateRNNConstant
+        case LSTMInputIndexW: // W
+        case LSTMInputIndexH: // R
+        case LSTMInputIndexB: // B
+        case LSTMInputIndexsequence_lens: // sequence_lens
+        case LSTMInputIndexinitial_h: // initial_h
+        case LSTMInputIndexinitial_c: // initial_c
+        case LSTMInputIndexP: // P
+            NOT_IMPLEMENTED;
         default:
             LogicError("LSTM node has unexpected input");
         }
@@ -889,8 +899,16 @@ Variable ONNXToCNTKHelper::CreateLeafVariableOrConstant(const NodeArg *nodeArg,
     }
 
     std::vector<Axis> dynamicAxes({ Axis::DefaultBatchAxis() });
-    // TODO: add sequence axis only if the input node is connected to an RNN node.
-    bool hasSequenceAxis = nodeArg->Name() == "Input3";
+
+    // TODO: this is not fully correct. We need to get hasSequenceAxis 
+    // over the traverse path. An input will have a sequence axis 
+    // only if it outputs to an RNN op along the path.
+    // This requires support from LotusIR. 
+    // Now traversing starts from arbitray nodes which may miss the RNN op.
+    bool hasSequenceAxis = std::any_of((const_cast<Graph *>(graph))->Nodes_begin(), 
+        (const_cast<Graph *>(graph))->Nodes_end(),
+        [](Node *node) {return Operators::IsRNNOp(node->OpType()); });
+
     if (hasSequenceAxis)
     {
         shape = shape.SubShape(0, shape.Rank() - 1);
@@ -1102,6 +1120,17 @@ string ONNXToCNTKHelper::GetNamedAttributeAsString(const Node *node, const strin
     return attributeProto.s();
 }
 
+std::vector<std::string> ONNXToCNTKHelper::GetNamedAttributeAsStringVec(const Node *node, const string &attributeName, 
+    const std::vector<std::string> &defaultValues)
+{
+    NodeAttributes::const_iterator itValue = FindAttributeIterator(node, attributeName, false);
+    if (itValue == node->GetAttributes().end())
+        return defaultValues;
+       
+    const AttributeProto &attributeProto = itValue->second;
+    return std::vector<std::string>(attributeProto.strings().begin(), attributeProto.strings().end());
+}
+
 std::vector<int64_t> ONNXToCNTKHelper::GetNamedAttributeAsInt64Vec(const Node *node, const string &attributeName)
 {
     NodeAttributes::const_iterator itValue = FindAttributeIterator(node, attributeName, true);
@@ -1297,6 +1326,9 @@ std::pair<Variable, Variable> ONNXToCNTKHelper::BroadcastElementWiseInput(
     }
     else
     {
+        // this is to handle edge cases where one input has batch (and sequence) axis and the other does not.
+        // the input with rank higher is caused by extra batch/sequence dimension which need to be squeezed away. 
+        // TODO: investigate if this edge case can be avoided when converting CNTK to ONNX.
         if (input0.Shape().Rank() == input1.Shape().Rank() - 1)
         {
             if (input0.HasBatchAxis() && !input1.HasBatchAxis())
@@ -1380,8 +1412,6 @@ std::pair<std::vector<size_t>, std::vector<size_t> > ONNXToCNTKHelper::AdjustONN
     return SplitAndReverseVec(pads);
 }
 
-#include "RNNHelper.h"
-
 FunctionPtr ONNXToCNTKHelper::CreateFunction(const Node *node, const std::vector<Variable> &inputs)
 {
     string onnxOpName = node->OpType();
@@ -1395,7 +1425,11 @@ FunctionPtr ONNXToCNTKHelper::CreateFunction(const Node *node, const std::vector
     else if (onnxOpName == "LSTM")
     {
         const string direction = GetNamedAttributeAsString(node, "direction");
-        return CreateLSTM(node, inputs, direction);
+        std::vector<float> activation_alpha = GetNamedAttributeAsFloatVec(node, "activation_alpha", std::vector<float>());
+        std::vector<float> activation_beta = GetNamedAttributeAsFloatVec(node, "activation_beta", std::vector<float>());
+        const std::vector<string> activations = GetNamedAttributeAsStringVec(node, "activations", 
+            std::vector<string>({"Sigmoid", "Tanh", "Tanh"}));
+        return CreateLSTM(node, inputs, direction, activations, activation_alpha, activation_beta);
     }
     if (onnxOpName == "FC")
     {
@@ -1942,10 +1976,6 @@ FunctionPtr ONNXToCNTKHelper::CreateFunction(const Node *node, const std::vector
             return Reshape(inputs[0], newShape, ToWString(node->Name()));
         }
 
-        if ("Times18866_reshape" == node->Name())
-        {
-            return Reshape(inputs[0], inputs[0].Shape(), ToWString(node->Name()));
-        }
         NDShape newShape = GetNamedAttributeAsShape(node, "shape", false);
         if (inputs[0].DynamicAxes().size() > 0)
         {

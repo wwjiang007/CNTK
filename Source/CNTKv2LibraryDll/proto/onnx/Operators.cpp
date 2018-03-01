@@ -240,10 +240,6 @@ namespace ONNX
             { L"LogSoftmax", "LogSoftmax" },
             { L"axis", "axis" },
         } } },
-        // Office model has this low case opname
-        //{ L"softplus",{ {
-        //    { L"softplus", "Softplus" },
-        //    } } },
         { L"Softplus",{ {
             { L"Softplus", "Softplus" },
         } } },

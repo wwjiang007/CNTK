@@ -22,6 +22,9 @@ using namespace CNTK;
 const int FreeSequenceLen = 0;
 const std::string FreeSequenceDimParam = "None";
 
+// TODO: support cases where batch size is not 1.
+const int FreeBatchSize = 1;
+
 onnx::TypeProto TensorShapeProtoToTypeProto(const onnx::TensorShapeProto* inputShape)
 {
     onnx::TypeProto newShape;
@@ -95,6 +98,8 @@ namespace CNTK
             std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
             const std::unordered_map<Variable, Variable>& compositeOutputsMap);
 
+        static ONNXIR::Node *AddReshapeNode(const ONNXIR::NodeArg &nodeArg, const std::vector<int> &newShape, const std::string &outArgName, ONNXIR::Graph* graph);
+        static ONNXIR::Node *AddMatMulNode(const ONNXIR::NodeArg &nodeArg1, const ONNXIR::NodeArg &nodeArg2, ONNXIR::Graph* graph);
         static ONNXIR::Node *AddArgMaxNode(const ONNXIR::NodeArg &nodeArg, ONNXIR::Graph* graph, int axis);
         static ONNXIR::Node *AddCastNode(const ONNXIR::NodeArg &nodeArg, ONNXIR::Graph* graph, const std::string &toType);
 
@@ -118,10 +123,13 @@ namespace CNTK
             const std::string &uid, std::vector<ONNXIR::NodeArg> &nodeInputs);
 
         static void PrepareLSTMWeightNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
-            const std::vector<Variable> &Ws, float *stabilizerConstants, std::vector<ONNXIR::NodeArg> &nodeInputs);
+            const std::vector<Variable> &Ws, double *stabilizerConstants, std::vector<ONNXIR::NodeArg> &nodeInputs);
         static void PrepareBiasNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
             const std::vector<Variable> &Ws, std::vector<ONNXIR::NodeArg> &nodeInputs);
-
+        static void PrepareLSTMPeepholeNode(ONNXIR::Graph* graph,
+            std::unordered_map<Variable, ONNXIR::Node*>& variableNodes, const std::vector<Variable> &Ps,
+            const std::vector<double> &stabilizerDcCoefs, const std::vector<double> &stabilizerCCoefs,
+            std::vector<ONNXIR::NodeArg> &nodeInputs);
         //
         // Traverse the entire graph and collect variable mapping between graph inside and outside the block.
         //
@@ -135,13 +143,16 @@ namespace CNTK
         //
         static void CopyTensor(const NDArrayViewPtr src, onnx::TensorProto& dst, onnx::TypeProto *inputArgType = nullptr);
 
+        static void CopyTensorsWithMultipliers(const std::vector<NDArrayViewPtr> srcTensors, const std::vector<double> multipliers,
+            onnx::TensorProto& dst, onnx::TypeProto *inputArgType);
+
 
         static void FillTensorWithScalar(const std::vector<NDArrayViewPtr>& src, onnx::TensorProto& dst, const std::vector<int> dstShape);
 
         //
         // Create an ONNX weight tensor for LSTM op. It handles memory mapping from CNTK to ONNX.  
         //
-        static void CopyTensorsWithCNTKToONNXLSTMWeightLayoutConversion(const std::vector<NDArrayViewPtr> &src, float *stabilizerConstants,
+        static void CopyTensorsWithCNTKToONNXLSTMWeightLayoutConversion(const std::vector<NDArrayViewPtr> &src, double *stabilizerConstants,
             onnx::TensorProto& dst, onnx::TypeProto *inputArgType);
         //
         // Copy supported attributes from CNTK node to corresponding ONNX node.
@@ -345,7 +356,7 @@ void AppendCNTKBiasWeightToONNXTensor(DType *data, const NDShape &shape, onnx::T
 // CNTK data is column major. Gate weight order is icfo. 
 // ONNX is row major. Gate weight order is iofc. This method does the data layout conversion.  
 template<typename DType>
-void AppendCNTKWeightToONNXTensor(DType *data, const NDShape &shape, onnx::TensorProto& dst, float stabilizer)
+void AppendCNTKWeightToONNXTensor(DType *data, const NDShape &shape, onnx::TensorProto& dst, double stabilizer)
 {
     if (shape.Rank() == 1)
     {
@@ -397,7 +408,7 @@ void AppendCNTKWeightToONNXTensor(DType *data, const NDShape &shape, onnx::Tenso
     }
 }
 
-void CNTKToONNXHelper::CopyTensorsWithCNTKToONNXLSTMWeightLayoutConversion(const std::vector<NDArrayViewPtr> &src, float *stabilizerConstants,
+void CNTKToONNXHelper::CopyTensorsWithCNTKToONNXLSTMWeightLayoutConversion(const std::vector<NDArrayViewPtr> &src, double *stabilizerConstants,
     onnx::TensorProto& dst, onnx::TypeProto *inputArgType)
 {
     // TODO: all NDArrayViewPtr shall have the same shape and data types.
@@ -427,7 +438,7 @@ void CNTKToONNXHelper::CopyTensorsWithCNTKToONNXLSTMWeightLayoutConversion(const
         // This is our own copy so move it to the CPU.
         srcTemp->ChangeDevice(DeviceDescriptor::CPUDevice());
 
-        float stabilizer = stabilizerConstants != nullptr ? stabilizerConstants[i] : 1;
+        double stabilizer = stabilizerConstants != nullptr ? stabilizerConstants[i] : 1;
 
         switch (dataType)
         {
@@ -441,6 +452,50 @@ void CNTKToONNXHelper::CopyTensorsWithCNTKToONNXLSTMWeightLayoutConversion(const
         {
             auto data = srcTemp->DataBuffer<double>();
             AppendCNTKWeightToONNXTensor(data, srcShape, dst, stabilizer);
+            break;
+        }
+        default:
+            NOT_IMPLEMENTED;
+        }
+    }
+
+    std::vector<int64_t> dimensions = CNTKToONNXHelper::ToINTS(*inputArgType);
+    for (auto dim : dimensions)
+        *(dst.mutable_dims()->Add()) = dim;
+}
+
+void CNTKToONNXHelper::CopyTensorsWithMultipliers(const std::vector<NDArrayViewPtr> srcTensors, 
+    const std::vector<double> multipliers, 
+    onnx::TensorProto& dst, onnx::TypeProto *inputArgType)
+{
+    // TODO: verify that srcTensors has consistant shapes
+    for (int viewIndex = 0; viewIndex < srcTensors.size(); viewIndex++)
+    {
+        auto view = srcTensors[viewIndex];
+        double multiplier = multipliers[viewIndex];
+        auto dataType = view->GetDataType();
+        auto srcTemp = view->DeepClone();
+        auto srcShape = srcTemp->Shape();
+        auto totalSize = srcShape.TotalSize();
+        srcTemp->ChangeDevice(DeviceDescriptor::CPUDevice());
+        switch (dataType)
+        {
+        case DataType::Float:
+        {
+            dst.set_data_type(onnx::TensorProto_DataType_FLOAT);
+            auto data = srcTemp->DataBuffer<float>();
+            for (size_t index = 0; index < totalSize; index++)
+                *(dst.mutable_float_data()->Add()) = (float) (data[index] * multiplier);
+
+            break;
+        }
+        case DataType::Double:
+        {
+            dst.set_data_type(onnx::TensorProto_DataType_DOUBLE);
+            auto data = srcTemp->DataBuffer<double>();
+            for (size_t index = 0; index < totalSize; index++)
+                *(dst.mutable_double_data()->Add()) = data[index] * multiplier;
+
             break;
         }
         default:
@@ -933,128 +988,48 @@ std::tuple<std::vector<int>, bool, int, bool> CNTKToONNXHelper::CalculateBroadca
         return make_tuple(dims2, broadCast, axis_start, swapInput);
     }
 
-    axis_start = axis_start > 0 ? axis_start : 0;
+axis_start = axis_start > 0 ? axis_start : 0;
 
-    const std::vector<int> broadcaseInputDims = swapInput ? dims1 : dims2;
-    // sanity check;
-    for (int i = 0; i < broadcaseInputDims.size(); i++)
+const std::vector<int> broadcaseInputDims = swapInput ? dims1 : dims2;
+// sanity check;
+for (int i = 0; i < broadcaseInputDims.size(); i++)
+{
+    if ((i < axis_start || i >= axis_stop) && broadcaseInputDims[i] != 1)
     {
-        if ((i < axis_start || i >= axis_stop) && broadcaseInputDims[i] != 1)
-        {
-            LogicError("dimension %d cannot be broadcasted", i);
-        }
-        else if (i >= axis_start && i < axis_stop && dims1[i] != dims2[i])
-        {
-            LogicError("dimension %d cannot be broadcasted", i);
-        }
+        LogicError("dimension %d cannot be broadcasted", i);
     }
-    std::vector<int> dimensions;
-    for (int i = axis_start; i < axis_stop; i++)
+    else if (i >= axis_start && i < axis_stop && dims1[i] != dims2[i])
     {
-        dimensions.push_back(broadcaseInputDims[i]);
+        LogicError("dimension %d cannot be broadcasted", i);
     }
+}
+std::vector<int> dimensions;
+for (int i = axis_start; i < axis_stop; i++)
+{
+    dimensions.push_back(broadcaseInputDims[i]);
+}
 
-    return make_tuple(dimensions, broadCast, axis_start, swapInput);
+return make_tuple(dimensions, broadCast, axis_start, swapInput);
 }
 
 template <typename FunctionType>
 void TraverseGraphWithPrePostActions(FunctionPtr cntkFunction, std::unordered_set<FunctionPtr>& visitedFunctions,
     FunctionType preFunctor, FunctionType postFunctor)
 {
-    visitedFunctions.insert(cntkFunction);
-    preFunctor(cntkFunction);
+visitedFunctions.insert(cntkFunction);
+preFunctor(cntkFunction);
 
-    std::vector<Variable> functionInputs = cntkFunction->Inputs();
-    for (const auto& input : functionInputs)
+std::vector<Variable> functionInputs = cntkFunction->Inputs();
+for (const auto& input : functionInputs)
+{
+    if (input.IsOutput() && visitedFunctions.find(input.Owner()) == visitedFunctions.end())
     {
-        if (input.IsOutput() && visitedFunctions.find(input.Owner()) == visitedFunctions.end())
-        {
-            const auto& inputFunction = input.Owner();
-            TraverseGraphWithPrePostActions(inputFunction, visitedFunctions, preFunctor, postFunctor);
-        }
+        const auto& inputFunction = input.Owner();
+        TraverseGraphWithPrePostActions(inputFunction, visitedFunctions, preFunctor, postFunctor);
     }
-
-    postFunctor(cntkFunction);
 }
 
-// A CNTK LSTM op is created with stacked matmul followed by a slice op for 4 gates. 
-// Slice order tells which graph path is for which gate. This method is 
-// to traverse the graph to find the 4 paths along the 4 gates. It helps to 
-// sunsequently find needed attributes in order to build an ONNX LSTM op.
-void TraceLSTMPathes(const FunctionPtr& src,
-    std::vector<FunctionPtr>& ht_it_path,
-    std::vector<FunctionPtr>& ht_bit_path,
-    std::vector<FunctionPtr>& ht_ft_path,
-    std::vector<FunctionPtr>& ht_ot_path,
-    bool &goBackwards)
-{
-    // src has to be an LSTM node. 
-    std::vector<Variable> inputVars = src->Inputs();
-    int pastValueInputCount = (int)std::count_if(inputVars.begin(), inputVars.end(),
-        [](Variable& input) {return input.Owner() != nullptr && input.Owner()->OpName() == L"PastValue"; });
-    int futureValueInputCount = (int)std::count_if(inputVars.begin(), inputVars.end(),
-        [](Variable& input) {return input.Owner() != nullptr && input.Owner()->OpName() == L"FutureValue"; });
-
-    if (pastValueInputCount == 2 && futureValueInputCount == 0)
-    {
-        goBackwards = false;
-    }
-    else if (pastValueInputCount == 0 && futureValueInputCount == 2)
-    {
-        goBackwards = true;
-    }
-    else
-    {
-        CNTK::LogicError("Node %s (%s) is not a valid LSTM node", ToString(src->Name()).c_str(), ToString(src->Uid()).c_str());
-    }
-
-    std::unordered_set<FunctionPtr> visitedFunctions;
-    for (std::vector<Variable>::const_iterator it = inputVars.begin(); it != inputVars.end(); it++)
-    {
-        visitedFunctions.insert(it->Owner());
-    }
-
-    std::vector<std::vector<FunctionPtr>> pathesToPlusSlice;
-    std::vector<FunctionPtr> currentPath;
-
-    TraverseGraphWithPrePostActions(src->BlockRoot(),
-        visitedFunctions,
-        (std::function<void(const FunctionPtr&)>)[&pathesToPlusSlice, &currentPath](const FunctionPtr& function)
-    {
-        currentPath.push_back(function);
-        if (function->OpName() == L"Slice")
-        {
-            FunctionPtr functionSource = function->Inputs()[0].Owner();
-            if (functionSource->OpName() == L"Plus")
-            {
-                pathesToPlusSlice.push_back(currentPath);
-            }
-        }
-    },
-        (std::function<void(const FunctionPtr&)>)[&currentPath](const FunctionPtr& function)
-    {
-        currentPath.pop_back();
-    });
-
-    if (pathesToPlusSlice.size() != 4)
-    {
-        CNTK::LogicError("pathesToPlusSlice.size() != 4");
-    }
-
-    std::sort(pathesToPlusSlice.begin(), pathesToPlusSlice.end(),
-        [](const std::vector<FunctionPtr>& path1, const std::vector<FunctionPtr>& path2)
-    {
-        FunctionPtr slice1 = *path1.rbegin();
-        FunctionPtr slice2 = *path2.rbegin();
-        int beginIndex1 = slice1->Attributes()[PrimitiveFunction::AttributeNameBeginIndex].Value<int>();
-        int beginIndex2 = slice2->Attributes()[PrimitiveFunction::AttributeNameBeginIndex].Value<int>();
-        return beginIndex1 < beginIndex2;
-    });
-
-    ht_it_path = pathesToPlusSlice[0];
-    ht_bit_path = pathesToPlusSlice[1];
-    ht_ft_path = pathesToPlusSlice[2];
-    ht_ot_path = pathesToPlusSlice[3];
+postFunctor(cntkFunction);
 }
 
 bool IsSupportedRNNActivation(const std::wstring &cntkOpName)
@@ -1092,6 +1067,287 @@ std::string FindActivation(const std::vector<FunctionPtr> &path, int nth)
         }
     }
     return "";
+}
+
+Variable GetPeepholeVariableFromOp(FunctionPtr peepholeOp)
+{
+    // peephole variable is that child of peepholeOp that is neither stabilizer nor place holder 
+    if (peepholeOp->OpName() != L"ElementTimes")
+        CNTK::LogicError("Peephole operation must be ElementTimes");
+
+    Variable peepholeVariable;
+    FunctionPtr stabilizerOp;
+    for (int i = 0; i < peepholeOp->Inputs().size(); i++)
+    {
+        if (peepholeOp->Inputs()[i].Owner() && peepholeOp->Inputs()[i].Owner()->OpName() == L"Stabilizer")
+        {
+            stabilizerOp = peepholeOp->Inputs()[i].Owner();
+        }
+        else if (peepholeOp->Inputs()[i].IsConstant() || peepholeOp->Inputs()[i].IsParameter())
+        {
+            if (peepholeVariable == Variable())
+                peepholeVariable = peepholeOp->Inputs()[i];
+            else
+                CNTK::LogicError("Cannot find peephole variable from peephole op. Multiple qualified variables found.");
+        }
+    }
+
+    if (peepholeVariable == Variable())
+        CNTK::LogicError("Cannot find peephole variable from peephole op.");
+    return peepholeVariable;
+}
+
+// this method helps getting a stabilizer op from its parent/grandparent op.
+// the parent op can be Times or ElementTimes. The grandparent op can be a plus op.
+FunctionPtr GetStabilizerOp(FunctionPtr parentOp)
+{
+    FunctionPtr timesOp;
+    if (parentOp->OpName() == L"Plus")
+    {
+        for (int i = 0; i < parentOp->Inputs().size(); i++)
+        {
+            if (parentOp->Inputs()[i].Owner() &&
+                (parentOp->Inputs()[i].Owner()->OpName() == L"Times" ||
+                    parentOp->Inputs()[i].Owner()->OpName() == L"ElementTimes"))
+            {
+                timesOp = parentOp->Inputs()[i].Owner();
+                break;
+            }
+        }
+    }
+    else if (parentOp->OpName() == L"Times" || parentOp->OpName() == L"ElementTimes")
+    {
+        timesOp = parentOp;
+    }
+
+    if (!timesOp)
+    {
+        CNTK::LogicError("Cannot find stabilizer op. A stabilizer op must be from Times or ElementTimes ops or skipped from a Plus op.");
+    }
+
+    for (int j = 0; j < timesOp->Inputs().size(); j++)
+    {
+        if (timesOp->Inputs()[j].Owner() && timesOp->Inputs()[j].Owner()->OpName() == L"Stabilizer")
+        {
+            return timesOp->Inputs()[j].Owner();
+        }
+    }
+
+    return nullptr;
+}
+
+double GetScaler(Variable variable)
+{
+    NDArrayViewPtr v = variable.IsParameter() ? Parameter(variable).Value() : Constant(variable).Value();
+    NDArrayViewPtr cpuV = v->DeepClone();
+    cpuV->ChangeDevice(DeviceDescriptor::CPUDevice());
+
+    switch (variable.GetDataType())
+    {
+    case DataType::Float:
+        return *((float *)cpuV->DataBuffer<float>());
+    case DataType::Double:
+        return *((double *)cpuV->DataBuffer<double>());
+    default:
+        NOT_IMPLEMENTED;
+    }
+}
+
+double GetStabilizerCoef(const FunctionPtr stabilizerDhOp)
+{
+    double alpha = GetScaler(stabilizerDhOp->Inputs()[3]);
+    double steepness = GetScaler(stabilizerDhOp->Inputs()[1]);
+    return (log(exp(alpha * steepness) + 1.0F) / steepness);
+}
+
+// A CNTK LSTM op is created with stacked matmul followed by a slice op for 4 gates. 
+// Slice order tells which graph path is for which gate. This method is 
+// to traverse the graph to find the 4 paths along the 4 gates. It helps to 
+// subsequently find needed attributes in order to build an ONNX LSTM op.
+void TraceLSTMPathes(const FunctionPtr& src,
+    string &f_activation,
+    string &g_activation,
+    string &h_activation,
+    bool &goBackwards,
+    Variable &initStateH, 
+    Variable &initStateC,
+    Variable &peepholeCi,
+    Variable &peepholeCo,
+    Variable &peepholeCf,
+    double &stabilizer_dh,
+    double &stabilizer_dc,
+    double &stabilizer_c)
+{
+    // src has to be an LSTM node. 
+    std::vector<Variable> inputVars = src->Inputs();
+    std::vector<FunctionPtr> pastValueOps, futureValueOps;
+    for (std::vector<Variable>::iterator it = inputVars.begin(); it != inputVars.end(); ++it)
+    {
+        if ((*it).Owner() != nullptr && (*it).Owner()->OpName() == L"PastValue")
+            pastValueOps.push_back((*it).Owner());
+        else if ((*it).Owner() != nullptr && (*it).Owner()->OpName() == L"FutureValue")
+            futureValueOps.push_back((*it).Owner());
+    }
+
+    if (pastValueOps.size() == 2 && futureValueOps.size() == 0)
+    {
+        goBackwards = false;
+        initStateH = pastValueOps[0]->Inputs()[1];
+        initStateC = pastValueOps[1]->Inputs()[1];
+    }
+    else if (pastValueOps.size() == 0 && futureValueOps.size() == 2)
+    {
+        goBackwards = true;
+        initStateH = futureValueOps[0]->Inputs()[1];
+        initStateC = futureValueOps[1]->Inputs()[1];
+    }
+    else
+    {
+        CNTK::LogicError("Node %s (%s) is not a valid LSTM node", ToString(src->Name()).c_str(), ToString(src->Uid()).c_str());
+    }
+
+    // set up traverse boundary
+    std::unordered_set<FunctionPtr> visitedFunctions;
+    for (std::vector<Variable>::const_iterator it = inputVars.begin(); it != inputVars.end(); it++)
+    {
+        visitedFunctions.insert(it->Owner());
+    }
+
+    // First find the peephole op node. 
+    // see CNTK\bindings\python\cntk\layers\blocks.py node references.
+    std::vector<std::vector<FunctionPtr>> pathesBitBftJoint;
+    {
+        std::vector<FunctionPtr> currentPeepholePath;
+        
+        // make a copy of traverse boundary 
+        std::unordered_set<FunctionPtr> peepHoleVisitedFunctions = visitedFunctions;
+
+        // traverse to find the joint of bit and bft
+        TraverseGraphWithPrePostActions(src->BlockRoot(),
+            peepHoleVisitedFunctions,
+            (std::function<void(const FunctionPtr&)>)[
+                &peepHoleVisitedFunctions, &pathesBitBftJoint, &currentPeepholePath](const FunctionPtr& function)
+        {
+            currentPeepholePath.push_back(function);
+            if (function->OpName() == L"Plus" && 
+                function->Inputs()[0].Owner() && function->Inputs()[0].Owner()->OpName() == L"ElementTimes" &&
+                function->Inputs()[1].Owner() && function->Inputs()[1].Owner()->OpName() == L"ElementTimes")
+            {
+                pathesBitBftJoint.push_back(currentPeepholePath);
+                peepHoleVisitedFunctions.erase(std::find_if(peepHoleVisitedFunctions.begin(), peepHoleVisitedFunctions.end(),
+                    [function](FunctionPtr f) {return function == f; }));
+            }
+        },
+            (std::function<void(const FunctionPtr&)>)[&currentPeepholePath](const FunctionPtr& function)
+        {
+            currentPeepholePath.pop_back();
+        });
+    }
+
+    FunctionPtr peepholeCoOp;
+    bool haspeephole = pathesBitBftJoint.size() == 3;
+    if (haspeephole)
+    {
+        // the last ElementTimes op is the peephole op
+        std::vector<FunctionPtr> &peepholePath = *std::max_element(pathesBitBftJoint.begin(), pathesBitBftJoint.end(),
+            [](std::vector<FunctionPtr> &p1, std::vector<FunctionPtr> &p2) {return p1.size() < p2.size(); });
+        std::vector<FunctionPtr>::reverse_iterator itPeepholeOp = std::find_if(peepholePath.rbegin(), peepholePath.rend(),
+            [](FunctionPtr function) {return function->OpName() == L"ElementTimes"; });
+        if (itPeepholeOp == peepholePath.rend())
+        {
+            CNTK::LogicError("Cannot find peephole op from a LSTM graph");
+        }
+
+        peepholeCoOp = *itPeepholeOp;
+        peepholeCo = GetPeepholeVariableFromOp(peepholeCoOp);
+
+        FunctionPtr stabilizer_h_op = GetStabilizerOp(peepholeCoOp);
+        if (stabilizer_h_op)
+        {
+            stabilizer_c = GetStabilizerCoef(stabilizer_h_op);
+        }
+    }
+
+    std::vector<std::vector<FunctionPtr>> pathesToPlusSlice;
+    std::vector<FunctionPtr> currentPath;
+
+    if (haspeephole)
+        // so that traverse will not be affected by the peephole path
+        visitedFunctions.insert(peepholeCoOp);
+
+    TraverseGraphWithPrePostActions(src->BlockRoot(),
+        visitedFunctions,
+        (std::function<void(const FunctionPtr&)>)[&pathesToPlusSlice, &currentPath](const FunctionPtr& function)
+    {
+        currentPath.push_back(function);
+        if (function->OpName() == L"Slice")
+        {
+            FunctionPtr functionSource = function->Inputs()[0].Owner();
+            if (functionSource->OpName() == L"Plus")
+            {
+                pathesToPlusSlice.push_back(currentPath);
+            }
+        }
+    },
+        (std::function<void(const FunctionPtr&)>)[&currentPath](const FunctionPtr& function)
+    {
+        currentPath.pop_back();
+    });
+
+    if (pathesToPlusSlice.size() != 4)
+    {
+        CNTK::LogicError("pathesToPlusSlice.size() != 4");
+    }
+
+    std::sort(pathesToPlusSlice.begin(), pathesToPlusSlice.end(),
+        [](const std::vector<FunctionPtr>& path1, const std::vector<FunctionPtr>& path2)
+    {
+        FunctionPtr slice1 = *path1.rbegin();
+        FunctionPtr slice2 = *path2.rbegin();
+        int beginIndex1 = slice1->Attributes()[PrimitiveFunction::AttributeNameBeginIndex].Value<int>();
+        int beginIndex2 = slice2->Attributes()[PrimitiveFunction::AttributeNameBeginIndex].Value<int>();
+        return beginIndex1 < beginIndex2;
+    });
+
+    std::vector<FunctionPtr> &ht_it_path = pathesToPlusSlice[0];
+    std::vector<FunctionPtr> &ht_bit_path = pathesToPlusSlice[1];
+    std::vector<FunctionPtr> &ht_ft_path = pathesToPlusSlice[2];
+    std::vector<FunctionPtr> &ht_ot_path = pathesToPlusSlice[3];
+
+    f_activation = FindActivation(ht_ot_path, 0);
+    g_activation = FindActivation(ht_bit_path, 1);
+    h_activation = FindActivation(ht_bit_path, 0);
+
+    // stabilizer_dh
+    FunctionPtr stackedProjPlusOp = ht_it_path[ht_it_path.size() - 1]->Inputs()[0].Owner();
+    FunctionPtr stabilizerDhOp = GetStabilizerOp(stackedProjPlusOp);
+    if (stabilizerDhOp)
+    {
+        stabilizer_dh = GetStabilizerCoef(stabilizerDhOp);
+    }
+
+    if (haspeephole)
+    {
+        {
+            // Ci merges to ht_it_path via element-wise time
+            FunctionPtr plusOp = ht_it_path[ht_it_path.size() - 2];
+            FunctionPtr peepholeOp = plusOp->Inputs()[0].Owner()->OpName() != L"Slice" ?
+                plusOp->Inputs()[0].Owner() : plusOp->Inputs()[1].Owner();
+            peepholeCi = GetPeepholeVariableFromOp(peepholeOp);
+
+        }
+        {
+            // Cf merges to ht_ft_path via element-wise time
+            FunctionPtr plusOp = ht_ft_path[ht_ft_path.size() - 2];
+            FunctionPtr peepholeOp = plusOp->Inputs()[0].Owner()->OpName() != L"Slice" ?
+                plusOp->Inputs()[0].Owner() : plusOp->Inputs()[1].Owner();
+            peepholeCf = GetPeepholeVariableFromOp(peepholeOp);
+
+            FunctionPtr stabilizerDcOp = GetStabilizerOp(peepholeOp);
+            if (stabilizerDcOp)
+                stabilizer_dc = GetStabilizerCoef(stabilizerDcOp);
+        }
+    }
 }
 
 // prepare an input node arg with correct name and meta data so that LotusIR can make the connection. 
@@ -1198,8 +1454,64 @@ void CNTKToONNXHelper::PrepareBiasNode(ONNXIR::Graph* graph, std::unordered_map<
     variableNodes.emplace(Bs[0], variableNode);
 }
 
+void CNTKToONNXHelper::PrepareLSTMPeepholeNode(ONNXIR::Graph* graph,
+    std::unordered_map<Variable, ONNXIR::Node*>& variableNodes, const std::vector<Variable> &Ps,
+    const std::vector<double> &stabilizerDcCoefs, const std::vector<double> &stabilizerCCoefs,
+    std::vector<ONNXIR::NodeArg> &nodeInputs)
+{
+    // this method is called when all Ps are valid parameter/constant variable.
+    int hidden_size = Ps[0].Shape()[0];
+    int directions = Ps.size() / 3;
+    bool doReverseVec = false;
+    std::vector<int> shape({ directions, 3 * hidden_size });
+    onnx::TypeProto inputArgType = ToTypeProto(shape, doReverseVec);
+    UpdateONNXType(Ps[0].GetDataType(), inputArgType);
+    ONNXIR::NodeArg inputArg(ToString(Ps[0].Uid()), &inputArgType);
+    std::vector<ONNXIR::NodeArg> varOutputs({ inputArg });
+    std::vector<ONNXIR::NodeArg> varInputs;
+    std::string inputName = inputArg.Name();
+    ONNXIR::Node* variableNode = graph->AddNode(inputName, "Constant", "", std::vector<ONNXIR::NodeArg>(), varOutputs);
+
+    std::vector<NDArrayViewPtr> srcTensors;
+    std::vector<double> multipliers;
+    for (int i = 0; i < Ps.size(); i++)
+    {
+        // Because ONNX does not support stabilizer internal to LSTM, we have to fuse 
+        // stabilizer operation with peephole weight. Notice that element wise times is
+        // applied to stabilizer and peephole weight, it is safe to adjust peephole
+        // weight with stabilizer coefficient.
+        // Ps is in iof order, 
+        // apply dc stabilizer coefficient to i and f
+        // apply c stabilizer coefficient to o
+        int dir = i / 3;
+        switch (i % 3)
+        {
+        case 0:
+        case 2:
+            multipliers.push_back(stabilizerDcCoefs[dir]);
+            break;
+        case 1:
+            multipliers.push_back(stabilizerCCoefs[dir]);
+            break;
+        }
+        const Variable &variable = Ps[i];
+        
+        srcTensors.push_back(variable.IsParameter() ? Parameter(variable).Value() : Constant(variable).Value());
+    }
+
+    onnx::TensorProto dstTensor;
+
+    CopyTensorsWithMultipliers(srcTensors, multipliers, dstTensor, &inputArgType);
+
+    variableNode->AddAttribute("value", dstTensor);
+    nodeInputs.push_back(inputArg);
+
+    // TODO:
+    variableNodes.emplace(Ps[0], variableNode);
+}
+
 void CNTKToONNXHelper::PrepareLSTMWeightNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
-    const std::vector<Variable> &Ws, float *stabilizerConstants, std::vector<ONNXIR::NodeArg> &nodeInputs)
+    const std::vector<Variable> &Ws, double *stabilizerConstants, std::vector<ONNXIR::NodeArg> &nodeInputs)
 {
     // TODO: sanity check for all variables to have the same shape and data types.
     // NDShape is in reversed order relative CNTK python so doReverseVec need to be true 
@@ -1234,17 +1546,6 @@ void CNTKToONNXHelper::PrepareLSTMWeightNode(ONNXIR::Graph* graph, std::unordere
     variableNodes.emplace(Ws[0], variableNode);
 }
 
-float GetScaler(Variable variable)
-{
-    NDArrayViewPtr v = variable.IsParameter() ? Parameter(variable).Value() : Constant(variable).Value();
-    NDArrayViewPtr cpuV = v->DeepClone();
-    cpuV->ChangeDevice(DeviceDescriptor::CPUDevice());
-
-    return *((float *)cpuV->DataBuffer<float>());
-
-}
-
-#pragma warning(disable: 4189)
 ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
     ONNXIR::Graph* graph,
     std::unordered_map<FunctionPtr, ONNXIR::Node*>& functionNodes,
@@ -1266,76 +1567,91 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
     }
     else
     {
-        // LogicError()
-        return nullptr;
+        LogicError("An LSTM op should start with an LSTM op (single direction) or a Splice op (bidirectional).");
     }
 
+    // For single direction LSTM,  lstms.size() == 1. For bidirectional LSTM, lstms.size() == 2. 
+    // It is an error otherwise.
     if (lstms.size() == 0 || lstms.size() > 2 ||
         std::any_of(lstms.cbegin(), lstms.cend(), [](const FunctionPtr &f) {return f->OpName() != L"LSTM"; }))
     {
-        LogicError("Invalid LSTM node");
+        LogicError("Invalid number of LSTM ops to construct an ONNX LSTM node.");
     }
     
     // order forward, backward
+    std::map<bool, int> directionCount({ { false, 0 } ,{ true, 0 } });
 
-    std::vector<std::string> activations(lstms.size() * 3);
-    std::vector<Variable> Xs(lstms.size()), Ws(lstms.size()), Rs(lstms.size()), Bs(lstms.size()), Yhs(lstms.size()), Ycs(lstms.size()),
-        initialHs(lstms.size()), initialCs(lstms.size());
-    std::vector<float> stabilizerCoefs(lstms.size());
-    std::map<bool, int> directionCount({ {false, 0} ,{true, 0} });
+    // The following construct refers to ONNX spec:
+    // https://github.com/onnx/onnx/blob/master/docs/Operators.md#lstm
+    // specifically, for attrubute and variable dimension. 
+    // We use the term from the spec as possible as we can to maintain a close correlation
+    // to the ONNX specification. 
+    
+    int num_directions = lstms.size();
+    // A list of 3 (or 6 if bidirectional) activation functions for input, output, forget, cell, and hidden.
+    std::vector<std::string> activations(num_directions * 3);
+
+    // TODO:
+    // In principle all these variables shall be treated as either constant or op output. 
+    // In reality except X, all other inputs to LSTM can be treated as constant.
+    // We will investigate when there is any model that failed above assumption.
+    std::vector<Variable> Xs(num_directions), Ws(num_directions), Rs(num_directions), Bs(num_directions),
+        initialHs(num_directions), initialCs(num_directions), Ps(num_directions * 3);
+
+    std::vector<Variable> Yhs(lstms.size()), Ycs(lstms.size());
+
+    // 
+    std::vector<double> stabilizerDhCoefs(lstms.size()), stabilizerDcCoefs(lstms.size()), stabilizerCCoefs(lstms.size());
 
     for (std::vector<FunctionPtr>::const_iterator itLSTMBlock = lstms.cbegin(); itLSTMBlock != lstms.cend(); itLSTMBlock++)
     {
         // src has to be an LSTM node. 
-        std::vector<FunctionPtr> ht_it_path;
-        std::vector<FunctionPtr> ht_bit_path;
-        std::vector<FunctionPtr> ht_ft_path;
-        std::vector<FunctionPtr> ht_ot_path;
-        bool goBackwards;
         const FunctionPtr& lstm = *itLSTMBlock;
-        TraceLSTMPathes(lstm, ht_it_path, ht_bit_path, ht_ft_path, ht_ot_path, goBackwards);
+        string f_activation, g_activation, h_activation;
+        bool goBackwards;
+        Variable initStateH, initStateC;
+        Variable peepholeCi, peepholeCo, peepholeCf;
+        double stabilizer_dh = 1, stabilizer_dc = 1, stabilizer_c = 1;
+        TraceLSTMPathes(lstm, f_activation, g_activation, h_activation, goBackwards,
+            initStateH, initStateC,
+            peepholeCi, peepholeCo, peepholeCf, stabilizer_dh, stabilizer_dc, stabilizer_c);
+
         directionCount[goBackwards]++;
 
         int directionIndex = lstms.size() == 1 ? 0 : (goBackwards ? 1 : 0);
 
-        string f_activation = FindActivation(ht_ot_path, 0);
-        string g_activation = FindActivation(ht_bit_path, 1);
-        string h_activation = FindActivation(ht_bit_path, 0);
+        initialHs[directionIndex] = initStateH;
+        initialCs[directionIndex] = initStateC;
+
+        Ps[3 * directionIndex + 0] = peepholeCi;
+        Ps[3 * directionIndex + 1] = peepholeCo;
+        Ps[3 * directionIndex + 2] = peepholeCf;
+
         activations[directionIndex * 3 + 0] = f_activation;
         activations[directionIndex * 3 + 1] = g_activation;
         activations[directionIndex * 3 + 2] = h_activation;
     
         std::vector<Variable> inputs = lstm->Inputs();
 
-        // inputs size is 10 if there is a stabilizer and initial states in LSTM.
-        int inputIndex = inputs.size() == 10 ? 9 : 5;
+        stabilizerDhCoefs[directionIndex] = stabilizer_dh;
+        stabilizerDcCoefs[directionIndex] = stabilizer_dc;
+        stabilizerCCoefs[directionIndex] = stabilizer_c;
+
+        // input, weight, hidden weight, and bias have fixed indices. 
+        // Thus we do not bother obtain them through traversing.
+        int inputIndex = inputs.size() - 1;
+        const int weightIndex = 1, hiddenWeightIndex = 2, biasIndex = 0;
         Xs[directionIndex] = inputs[inputIndex];
-        Ws[directionIndex] = inputs[1];
-        Rs[directionIndex] = inputs[2];
-        Bs[directionIndex] = inputs[0];
+
+        Ws[directionIndex] = inputs[weightIndex];
+        Rs[directionIndex] = inputs[hiddenWeightIndex];
+        Bs[directionIndex] = inputs[biasIndex];
 
         std::vector<Variable> outputs = lstm->Outputs();
 
         // TODO: ONNX does not have an option equivalent to return_full_state. 
         Yhs[directionIndex] = outputs[0];
         Ycs[directionIndex] = outputs[1];
-
-        // TODO: work with different cases other than the following 2 configuration of LSTM.
-        if (inputs.size() == 10)
-        {
-            // with a stabilizer and initial states
-            float steepness = GetScaler(inputs[5]);
-            float alpha = GetScaler(inputs[6]);
-            initialHs[directionIndex] = inputs[7].Owner()->Inputs()[1];
-            initialCs[directionIndex] = inputs[8].Owner()->Inputs()[1];
-
-            stabilizerCoefs[directionIndex] = (log(exp(alpha * steepness) + 1) / steepness);
-        }
-        else
-        {
-            // without stabilizer and initial states
-            stabilizerCoefs[directionIndex] = 1.0;
-        }
     }
 
     // ensure that if there is one direction, it is not backward.
@@ -1358,7 +1674,6 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
     // std::vector<float> activation_alpha;    // no supported activation need alpha.
     // std::vector<float> activation_beta;    // no supported activation need beta.
     int hidden_size = lstms[0]->Outputs()[0].Shape()[0];
-    int input_forget = 0;
     int output_sequence = 1;        // LSTM in CNTK always output full sequence of output
 
     // TODO: implement peephole
@@ -1368,7 +1683,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
     std::vector<ONNXIR::NodeArg> nodeInputs;
     PrepareLSTMInput(Xs[0], nodeInputs);
     PrepareLSTMWeightNode(graph, variableNodes, Ws, nullptr, nodeInputs);
-    PrepareLSTMWeightNode(graph, variableNodes, Rs, &stabilizerCoefs[0], nodeInputs);
+    PrepareLSTMWeightNode(graph, variableNodes, Rs, &stabilizerDhCoefs[0], nodeInputs);
     
     {
         bool hasBias = Bs[0] != Variable();
@@ -1402,13 +1717,11 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
         bool has_initial_h = initialHs[0] != Variable();
         if (has_initial_h)
         {
-            // TODO: how to set batchsize
-            int batchSize = 1;
             std::string hiddenUid = ToString(Yhs[0].Uid()) + "_initial_h";
-            PrepareLSTMInitialStateNode(graph, variableNodes, initialHs, batchSize, hidden_size, hiddenUid, nodeInputs);
+            PrepareLSTMInitialStateNode(graph, variableNodes, initialHs, FreeBatchSize, hidden_size, hiddenUid, nodeInputs);
 
             std::string cellUid = ToString(Ycs[0].Uid()) + "_initial_c";
-            PrepareLSTMInitialStateNode(graph, variableNodes, initialCs, batchSize, hidden_size, cellUid, nodeInputs);
+            PrepareLSTMInitialStateNode(graph, variableNodes, initialCs, FreeBatchSize, hidden_size, cellUid, nodeInputs);
         }
         else
         {
@@ -1422,6 +1735,13 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
             }
         }
 
+        // peephole
+        bool hasPeephole = Ps[0] != Variable();
+        if (hasPeephole)
+        {
+            PrepareLSTMPeepholeNode(graph, variableNodes, Ps, stabilizerDcCoefs, stabilizerCCoefs, nodeInputs);
+        }
+        else
         {
             ONNXIR::NodeArg inputArg("", nullptr);
             nodeInputs.push_back(inputArg);
@@ -1432,15 +1752,13 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
     {
         if (output_sequence == 1)
         {
-            // TODO: do this batch dimension meta data matter?
-            int batchSize = 1;
             std::string nodeName;
             if (lstms.size() == 1)
                 nodeName = ToString(Yhs[0].Uid());
             else
                 nodeName = ToString(src->Output().Uid());
 
-            auto outputArgType = ToTypeProto(std::vector<int>({ FreeSequenceLen, (int)Yhs.size(), batchSize, (int)Yhs[0].Shape()[0] }), false);
+            auto outputArgType = ToTypeProto(std::vector<int>({ FreeSequenceLen, (int)Yhs.size(), FreeBatchSize, (int)Yhs[0].Shape()[0] }), false);
             UpdateONNXType(Yhs[0].GetDataType(), outputArgType);
             ONNXIR::NodeArg outputArg(nodeName, &outputArgType);
             nodeOutputs.push_back(outputArg);
@@ -1472,6 +1790,9 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
         }
     }
 
+    // TODO: Except X, all other inputs to LSTM are treated as constant.
+    // It is highly unlikely that any other input is an output of an op. 
+    // We will investigate once it is real.
     if (Xs[0].Owner().get() != nullptr)
         CreateNode(Xs[0].Owner(), graph, functionNodes, variableNodes, compositeOutputsMap);
 
@@ -1496,6 +1817,22 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
 
     functionNodes.emplace(src, squeezedLSTMNode);
     return squeezedLSTMNode;
+}
+
+ONNXIR::Node *CNTKToONNXHelper::AddReshapeNode(const ONNXIR::NodeArg &nodeArg, const std::vector<int> &newShape, const std::string &outArgName, ONNXIR::Graph* graph)
+{
+    ONNXIR::NodeArg outputArg(outArgName, nullptr);
+    ONNXIR::Node* reshapeNode = graph->AddNode(nodeArg.Name() + string("_reshape"), "Reshape", "", { nodeArg }, { outputArg });
+    reshapeNode->AddAttribute("shape", ToINTS(newShape, false));
+    return reshapeNode;
+}
+
+ONNXIR::Node *CNTKToONNXHelper::AddMatMulNode(const ONNXIR::NodeArg &nodeArg1, const ONNXIR::NodeArg &nodeArg2, ONNXIR::Graph* graph)
+{
+    ONNXIR::NodeArg outputArg(nodeArg1.Name() + "matmul_out", nullptr);
+    ONNXIR::Node* argMatMulNode = graph->AddNode(
+        nodeArg1.Name() + string("_matmul"), "MatMul", "", { nodeArg1, nodeArg2 }, { outputArg });
+    return argMatMulNode;
 }
 
 ONNXIR::Node *CNTKToONNXHelper::AddArgMaxNode(const ONNXIR::NodeArg &nodeArg, ONNXIR::Graph* graph, int axis)
@@ -1782,11 +2119,11 @@ void CNTKToONNXHelper::TraverseGraph(const FunctionPtr& src,
             if (input.IsPlaceholder())
             {
                 input = input.BlockFunctionVariableMapping();
-                if (input.IsPlaceholder() && !Operators::IsRNNOp(opName))
+                if (!Operators::IsRNNOp(opName) && input.IsPlaceholder())
                     LogicError("Node '%S': Placeholder isn't supported currently.", src->AsString().c_str());
             }
 
-            if (input.IsOutput())
+            if (input != Variable() && input.IsOutput())
                 TraverseGraph(input.Owner(), visited, compositeOutputsMap);
         }
     }
@@ -2338,30 +2675,43 @@ ONNXIR::Node* CNTKToONNXHelper::AddNode(const FunctionPtr& src, ONNXIR::Graph* g
 
     if (L"Embedding" == src->OpName())
     {
-        int inputDataAxis = src->Inputs()[1].DynamicAxes().size();
-        ONNXIR::Node* argMax = AddArgMaxNode(orderedInputs[1], graph, inputDataAxis);
-        ONNXIR::Node* int32Cast = AddCastNode(argMax->OutputDefs()[0], graph, "INT32");
-
-        bool reshapeGather = true;
-        if (reshapeGather)
+        // WinML does not allow Cast between float and int. To workaround it, set workaroundWinMLNotSupportCastOfInt = true.
+        // otherwise use argmax, cast, gather whcih make more sense for an embedding operation.
+        bool workaroundWinMLNotSupportCastOfInt = true;
+        if (workaroundWinMLNotSupportCastOfInt)
         {
-            ONNXIR::NodeArg gatherIndexInputNodeArg(int32Cast->OutputDefs()[0].Name(), nullptr);
-            ONNXIR::NodeArg gatherSourceInputNodeArg(orderedInputs[0].Name(), nullptr);
-            ONNXIR::NodeArg gatherOutputArg(nodeName + "_gather_tmp", nullptr);
-            ONNXIR::Node* gatherNode = graph->AddNode(nodeName + "_tmp", "Gather", "", { gatherSourceInputNodeArg , gatherIndexInputNodeArg }, { gatherOutputArg });
-
-            ONNXIR::NodeArg reshapeInputNodeArg(gatherNode->OutputDefs()[0].Name(), nullptr);
-            ONNXIR::Node* reshapedGather = graph->AddNode(nodeName, "Reshape", "", { reshapeInputNodeArg }, outputs);
+            ONNXIR::Node* argMatMul = AddMatMulNode(orderedInputs[1], orderedInputs[0], graph);
             int input_size = src->Output().Shape()[0];
-            // std::vector<int> newShape({ SequenceLen, 1, input_size });
             std::vector<int> newShape({ FreeSequenceLen, 1, input_size });
-            reshapedGather->AddAttribute("shape", ToINTS(newShape, false));
-            return reshapedGather;
+            AddReshapeNode(argMatMul->OutputDefs()[0], newShape, outputs[0].Name(), graph);
         }
         else
         {
-            ONNXIR::NodeArg gatherIndexInputNodeArg(int32Cast->OutputDefs()[0].Name(), nullptr);
-            ONNXIR::Node* gatherNode = graph->AddNode(nodeName, "Gather", "", { orderedInputs[0] , gatherIndexInputNodeArg }, outputs);
+            int inputDataAxis = src->Inputs()[1].DynamicAxes().size();
+            ONNXIR::Node* argMax = AddArgMaxNode(orderedInputs[1], graph, inputDataAxis);
+            ONNXIR::Node* int32Cast = AddCastNode(argMax->OutputDefs()[0], graph, "INT32");
+
+            bool reshapeGather = true;
+            if (reshapeGather)
+            {
+                ONNXIR::NodeArg gatherIndexInputNodeArg(int32Cast->OutputDefs()[0].Name(), nullptr);
+                ONNXIR::NodeArg gatherSourceInputNodeArg(orderedInputs[0].Name(), nullptr);
+                ONNXIR::NodeArg gatherOutputArg(nodeName + "_gather_tmp", nullptr);
+                ONNXIR::Node* gatherNode = graph->AddNode(nodeName + "_tmp", "Gather", "", { gatherSourceInputNodeArg , gatherIndexInputNodeArg }, { gatherOutputArg });
+
+                ONNXIR::NodeArg reshapeInputNodeArg(gatherNode->OutputDefs()[0].Name(), nullptr);
+                ONNXIR::Node* reshapedGather = graph->AddNode(nodeName, "Reshape", "", { reshapeInputNodeArg }, outputs);
+                int input_size = src->Output().Shape()[0];
+                // std::vector<int> newShape({ SequenceLen, 1, input_size });
+                std::vector<int> newShape({ FreeSequenceLen, 1, input_size });
+                reshapedGather->AddAttribute("shape", ToINTS(newShape, false));
+                return reshapedGather;
+            }
+            else
+            {
+                ONNXIR::NodeArg gatherIndexInputNodeArg(int32Cast->OutputDefs()[0].Name(), nullptr);
+                graph->AddNode(nodeName, "Gather", "", { orderedInputs[0] , gatherIndexInputNodeArg }, outputs);
+            }
         }
     }
     else if (Operators::SupportBroadcast(src->OpName()))
@@ -2498,8 +2848,6 @@ std::pair<std::vector<int>, std::vector<int> > CNTKToONNXHelper::GetONNXPadsAttr
     }
     return std::make_pair(padsValueVectorLower, padsValueVectorUpper);
 }
-
-#pragma warning(disable: 4189)
 
 void CNTKToONNXHelper::FillTensorWithScalar(const std::vector<NDArrayViewPtr> &srcs,
     onnx::TensorProto& dst, const std::vector<int> dstShape)
