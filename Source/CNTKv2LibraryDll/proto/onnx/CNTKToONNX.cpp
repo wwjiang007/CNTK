@@ -1726,9 +1726,9 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
     float* Wdata = srcTemp->WritableDataBuffer<float>();
     // ?? Does Matrix ctor below make a copy of the buffer. If yes, then we don't need to do DeepClone above.
     Matrix<float> Wm(WcombinedShape[0], WcombinedShape[1], Wdata, -1, MatrixType::DENSE, MatrixFormat::matrixFormatDense); // -1 denotes CPU. // matrixFormatDenseRowMajor
-    printf("\n Wm--------------\n");
+    /*printf("\n Wm--------------\n");
     Wm.Print();
-    printf("\n ---------------------------------\n");
+    printf("\n ---------------------------------\n");*/
                                                                       // Step 2: Extract individual weight and bias matrices for each layer from the big weight matrix.
     std::vector<NDArrayViewPtr> W, R, B;
     std::tie<std::vector<NDArrayViewPtr>, std::vector<NDArrayViewPtr>, std::vector<NDArrayViewPtr> >
@@ -1753,9 +1753,14 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
     PrintNDArrayView(B[1]);
     printf("--------------------------------\n");*/
     // Step 3: Create ONNX nodes mirroring the implementation of OptimizedRNNStack.
-    ONNXIR::Node* functionNode;
+    ONNXIR::Node* functionNode = nullptr;
     bool inputNeedsShapeAdapter(false);
     auto ornnInput = src->Inputs()[0]; // CNTK OptimizedRNNStack node's input operand.
+
+    //if (ornnInput.IsOutput())
+    if (ornnInput.Owner().get() != nullptr)
+        CreateNode(ornnInput.Owner(), graph, functionNodes, variableNodes, compositeOutputsMap);
+
     auto ornnInputArgType = ToTypeProto(ornnInput.Shape(), ornnInput.HasBatchAxis(), HasSequenceAxis(ornnInput));
     UpdateONNXType(ornnInput.GetDataType(), ornnInputArgType);
     auto ornnOutput = src->Outputs()[0];
@@ -1776,7 +1781,12 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
     }
     UpdateONNXType(ornnOutput.GetDataType(), ornnOutputArgType);
 
-    ONNXIR::NodeArg layerInputOperandArg(ToString(ornnInput.Uid()), &ornnInputArgType);
+    std::string ornnInputName = ToString(ornnInput.Uid());
+    auto inputItr = compositeOutputsMap.find(ornnInput);
+    if (inputItr != compositeOutputsMap.end())
+        ornnInputName = ToString(inputItr->second.Uid());
+
+    ONNXIR::NodeArg layerInputOperandArg(ornnInputName, &ornnInputArgType);
     for (size_t i = 0; i < numLayers; ++i)
     {
         std::vector<ONNXIR::NodeArg> inputs;
@@ -1795,21 +1805,21 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
 
         // Input weight tensor W
         auto WArgName = ToString(Wcombined.Uid()) + "_W_" + std::to_string(i);
-        printf("\n Layer %zu - W After--------------\n", i);
+        /*printf("\n Layer %zu - W After--------------\n", i);
         PrintNDArrayView(W[i]);
-        printf("--------------------------------\n");
+        printf("--------------------------------\n");*/
         CreateRecurrentWeightONNXNodes(graph, variableNodes, Wcombined, inputs, W[i], WArgName);
         // Input weight tensor R (equivalent to CNTK's H)
         auto RArgName = ToString(Wcombined.Uid()) + "_R_" + std::to_string(i);
-        printf("\n Layer %zu - R After--------------\n", i);
+        /*printf("\n Layer %zu - R After--------------\n", i);
         PrintNDArrayView(R[i]);
-        printf("--------------------------------\n");
+        printf("--------------------------------\n");*/
         CreateRecurrentWeightONNXNodes(graph, variableNodes, Wcombined, inputs, R[i], RArgName);
         // Input weight tensor B
         auto BArgName = ToString(Wcombined.Uid()) + "_B_" + std::to_string(i);
-        printf("\n Layer %zu - B After--------------\n", i);
+        /*printf("\n Layer %zu - B After--------------\n", i);
         PrintNDArrayView(B[i]);
-        printf("--------------------------------\n");
+        printf("--------------------------------\n");*/
         CreateRecurrentWeightONNXNodes(graph, variableNodes, Wcombined, inputs, B[i], BArgName);
         // Create dummy input arg for optional arg sequence_lens
         auto seqLenArgName = ToString(Wcombined.Uid()) + "_seq_len_" + std::to_string(i);
@@ -1869,8 +1879,8 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
         inputNeedsShapeAdapter = true; // To enable shapoe adapter to allow stacking for next layer. 
     }
 
-    if (ornnInput.IsOutput())
-        CreateNode(ornnInput.Owner(), graph, functionNodes, variableNodes, compositeOutputsMap);
+    /*if (ornnInput.IsOutput())
+        CreateNode(ornnInput.Owner(), graph, functionNodes, variableNodes, compositeOutputsMap);*/
 
     functionNodes.emplace(src, functionNode);
     return functionNode;
@@ -1900,9 +1910,9 @@ CNTKToONNXHelper::SplitOptimzedRnnWtoIndivMats(Matrix<float>& WbigIn,
     Wbig.Reshape(1, WbigIn.GetNumElements()); 
     //// Matrix<float> Wbig(1, WbigIn.GetNumElements(), -1, MatrixType::DENSE, MatrixFormat::matrixFormatDense); // -1 is DEVICE_ID for CPU.
     //Wbig.SetValue(Wbig.Reshaped(1, WbigIn.GetNumElements())); //Deep copy, preserving row-major order of the underlying buffer.
-    printf("\n Wbig flattened.--------------\n");
+    /*printf("\n Wbig flattened.--------------\n");
     Wbig.Print();
-    printf("\n ---------------------------------\n");
+    printf("\n ---------------------------------\n");*/
 
     // Step 2: Extracting the weights W and R from big weight matrix (including backward ones in case of bidirectional op).
     size_t offset(0);
@@ -1910,34 +1920,34 @@ CNTKToONNXHelper::SplitOptimzedRnnWtoIndivMats(Matrix<float>& WbigIn,
     for (size_t i = 0; i < numLayers; ++i)
     {
         Matrix<float> fW = GetWeightMatFromOrnnBigW(Wbig, offset, layerInputSize, hiddenSize, numGates, recurrentOp);
-        printf("\nLayer %zu - fW--------\n", i);
+        /*printf("\nLayer %zu - fW--------\n", i);
         fW.Print();
-        printf("\n---------------------\n");
+        printf("\n---------------------\n");*/
         offset += layerInputSize * hiddenSize * numGates;
         W.push_back(Matrix<float>(fW, -1));
         Matrix<float> fR = GetWeightMatFromOrnnBigW(Wbig, offset, hiddenSize, hiddenSize, numGates, recurrentOp);
         fR = GetWeightMatFromOrnnBigW(Wbig, offset, hiddenSize, hiddenSize, numGates, recurrentOp);
         offset += hiddenSize * hiddenSize * numGates;
         R.push_back(Matrix<float>(fR, -1));
-        printf("\nLayer %zu - fR--------\n", i);
+        /*printf("\nLayer %zu - fR--------\n", i);
         fR.Print();
-        printf("\n---------------------\n");
+        printf("\n---------------------\n");*/
 
         // Matrix<float> bW(-1), bR(-1); // deviceId = 0 for CPU.
         if (bidirectional)
         {
             Matrix<float> bW = GetWeightMatFromOrnnBigW(Wbig, offset, layerInputSize, hiddenSize, numGates, recurrentOp);
-            printf("\n Layer %zu - bW--------\n", i);
+            /*printf("\n Layer %zu - bW--------\n", i);
             bW.Print();
-            printf("\n ---------------------\n");
+            printf("\n ---------------------\n");*/
             offset += layerInputSize * hiddenSize * numGates;
             W.push_back(Matrix<float>(bW, -1));
             Matrix<float> bR = GetWeightMatFromOrnnBigW(Wbig, offset, hiddenSize, hiddenSize, numGates, recurrentOp);
             offset += hiddenSize * hiddenSize * numGates;
             R.push_back(Matrix<float>(bR, -1));
-            printf("\n Layer %zu - bR--------\n", i);
+            /*printf("\n Layer %zu - bR--------\n", i);
             bR.Print();
-            printf("\n ---------------------\n");
+            printf("\n ---------------------\n");*/
         }
 
         layerInputSize = hiddenSize * numDirections;
@@ -1950,9 +1960,9 @@ CNTKToONNXHelper::SplitOptimzedRnnWtoIndivMats(Matrix<float>& WbigIn,
     for (size_t i = 0; i < numLayers; ++i)
     {
         Matrix<float> fB = GetBiasMatFromOrnnBigW(Wbig, offset, hiddenSize, numGates, recurrentOp);
-        printf("Layer %zu - fB--------\n", i);
+        /*printf("Layer %zu - fB--------\n", i);
         fB.Print();
-        printf("---------------------\n");
+        printf("---------------------\n");*/
         offset += 2 * hiddenSize * numGates;
         B.push_back(Matrix<float>(fB, -1));
         if (bidirectional)
@@ -1960,9 +1970,9 @@ CNTKToONNXHelper::SplitOptimzedRnnWtoIndivMats(Matrix<float>& WbigIn,
             Matrix<float> bB = GetBiasMatFromOrnnBigW(Wbig, offset, hiddenSize, numGates, recurrentOp);
             offset += 2 * hiddenSize * numGates;
             B.push_back(Matrix<float>(bB, -1));
-            printf("Layer %zu - bB--------\n", i);
+            /*printf("Layer %zu - bB--------\n", i);
             bB.Print();
-            printf("---------------------\n");
+            printf("---------------------\n");*/
         }
     }
 

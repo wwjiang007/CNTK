@@ -377,6 +377,9 @@ namespace ONNX
             { L"useStatsAcrossChannels", "across_channels" },
             { L"doVarianceScaling", "normalize_variance" },
             } } },
+        { L"NoOp",{ {
+            { L"NoOp", "Identity" },
+            } } },
     };
 
     // given a cntkOpName and cntk attribute OpName which is saved in CNTK::Function's attribute,
