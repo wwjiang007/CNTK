@@ -429,7 +429,7 @@ namespace ONNXIR
         }
     }
 
-#define ADD_BASIC_ATTR_IMPL(type, field)                                         \
+#define ADD_BASIC_ATTR_IMPL(type, enumType, field)                               \
     bool Node::AddAttribute(const std::string& p_attrName, const type& p_value)  \
     {                                                                            \
         auto it = m_attributes.find(p_attrName);                                 \
@@ -439,6 +439,7 @@ namespace ONNXIR
             m_graph->m_graphProtoSyncNeeded = true;                              \
             AttributeProto a;                                                    \
             a.set_name(p_attrName);                                              \
+            a.set_type(enumType);                                               \
             a.set_##field(p_value);                                              \
             m_attributes.emplace(p_attrName, a);                                 \
             return true;                                                         \
@@ -449,7 +450,7 @@ namespace ONNXIR
         }                                                                        \
     };                                                                           \
 
-#define ADD_ATTR_IMPL(type, field)                                               \
+#define ADD_ATTR_IMPL(type, enumType, field)                                     \
     bool Node::AddAttribute(const std::string& p_attrName, const type& p_value)  \
     {                                                                            \
         auto it = m_attributes.find(p_attrName);                                 \
@@ -459,6 +460,7 @@ namespace ONNXIR
             m_graph->m_graphProtoSyncNeeded = true;                              \
             AttributeProto a;                                                    \
             a.set_name(p_attrName);                                              \
+            a.set_type(enumType);                                               \
             *(a.mutable_##field()) = p_value;                                    \
             m_attributes.emplace(p_attrName, a);                                 \
             return true;                                                         \
@@ -469,7 +471,7 @@ namespace ONNXIR
         }                                                                        \
     };                                                                           \
 
-#define ADD_LIST_ATTR_IMPL(type, field)                                          \
+#define ADD_LIST_ATTR_IMPL(type, enumType, field)                                \
     bool Node::AddAttribute(const std::string& p_attrName,                       \
                             const std::vector<type>& p_values)                   \
     {                                                                            \
@@ -480,6 +482,7 @@ namespace ONNXIR
             m_graph->m_graphProtoSyncNeeded = true;                              \
             AttributeProto a;                                                    \
             a.set_name(p_attrName);                                              \
+            a.set_type(enumType);                                               \
             for (const auto& val : p_values)                                     \
             {                                                                    \
                 *(a.mutable_##field()->Add()) = val;                             \
@@ -493,16 +496,16 @@ namespace ONNXIR
         }                                                                        \
     };                                                                           \
 
-    ADD_BASIC_ATTR_IMPL(float, f)
-    ADD_BASIC_ATTR_IMPL(int64_t, i)
-    ADD_BASIC_ATTR_IMPL(std::string, s)
-    ADD_ATTR_IMPL(TensorProto, t)
-    ADD_ATTR_IMPL(GraphProto, g)
-    ADD_LIST_ATTR_IMPL(float, floats)
-    ADD_LIST_ATTR_IMPL(int64_t, ints)
-    ADD_LIST_ATTR_IMPL(std::string, strings)
-    ADD_LIST_ATTR_IMPL(TensorProto, tensors)
-    ADD_LIST_ATTR_IMPL(GraphProto, graphs)
+    ADD_BASIC_ATTR_IMPL(float, AttributeProto_AttributeType::AttributeProto_AttributeType_FLOAT, f)
+    ADD_BASIC_ATTR_IMPL(int64_t, AttributeProto_AttributeType::AttributeProto_AttributeType_INT, i)
+    ADD_BASIC_ATTR_IMPL(std::string, AttributeProto_AttributeType::AttributeProto_AttributeType_STRING, s)
+    ADD_ATTR_IMPL(TensorProto, AttributeProto_AttributeType::AttributeProto_AttributeType_TENSOR, t)
+    ADD_ATTR_IMPL(GraphProto, AttributeProto_AttributeType::AttributeProto_AttributeType_GRAPH, g)
+    ADD_LIST_ATTR_IMPL(float, AttributeProto_AttributeType::AttributeProto_AttributeType_FLOATS, floats)
+    ADD_LIST_ATTR_IMPL(int64_t, AttributeProto_AttributeType::AttributeProto_AttributeType_INTS, ints)
+    ADD_LIST_ATTR_IMPL(std::string, AttributeProto_AttributeType::AttributeProto_AttributeType_STRINGS, strings)
+    ADD_LIST_ATTR_IMPL(TensorProto, AttributeProto_AttributeType::AttributeProto_AttributeType_TENSORS, tensors)
+    ADD_LIST_ATTR_IMPL(GraphProto, AttributeProto_AttributeType::AttributeProto_AttributeType_GRAPHS, graphs)
 
     bool Node::ClearAttribute(const std::string& p_attrName)
     {
