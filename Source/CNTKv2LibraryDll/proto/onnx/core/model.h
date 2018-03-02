@@ -59,6 +59,9 @@ namespace ONNXIR
         // Set models' version.
         void SetModelversion(VERSION p_modelVersion);
 
+        // Set models' opset_import.
+        void Model::SetOpsetImport(VERSION p_modelVersion, const std::string& p_domain = "");
+
         // Get model's doc string.
         // Return null pointer if not specified.
         const std::string& DocString() const;

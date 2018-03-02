@@ -223,6 +223,7 @@ std::unique_ptr<ONNXIR::Model> CNTKToONNX::CreateModel(const FunctionPtr& src)
     model->SetModelversion(static_cast<ONNXIR::VERSION>(CNTK_ONNX_MODEL_VERSION)); // This is the default. Should be surfaced as graph's 'save' API input.
     model->SetProducerVersion(CNTK_ONNX_PRODUCER_VERSION);
     model->SetProducerName(CNTK_ONNX_PRODUCER_NAME);
+    model->SetOpsetImport(static_cast<int64_t>(1), "");
     return model;
 }
 
