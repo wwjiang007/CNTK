@@ -15,6 +15,7 @@
 #include <tuple>
 #include <numeric>
 #include <iostream>
+#include "RNNHelper.h"
 
 using namespace CNTK::ONNX;
 using namespace CNTK;
@@ -33,11 +34,6 @@ onnx::TypeProto TensorShapeProtoToTypeProto(const onnx::TensorShapeProto* inputS
         newShape.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(inputShape->dim(index).dim_value());
 
     return newShape;
-}
-
-bool HasSequenceAxis(Variable operand)
-{
-    return (operand.DynamicAxes().size() - (operand.HasBatchAxis() ? 1 : 0)) > 0;
 }
 
 //
@@ -895,7 +891,7 @@ std::tuple<std::pair<std::vector<int>, std::vector<int>>, bool, int, bool> CNTKT
     bool swapInput = false;
 
     bool hasAnyBatchAxis = input1.HasBatchAxis() || input2.HasBatchAxis();
-    bool hasAnySequenceAxis = HasSequenceAxis(input1) || HasSequenceAxis(input2);
+    bool hasAnySequenceAxis = input1.HasSequenceAxis() || input2.HasSequenceAxis();
 
     // CNTK and ONNX dimensions are reversed.
     // Reverse the dimension so that broadcast and axis calculation is in ONNX sense.
@@ -1091,14 +1087,14 @@ Variable GetPeepholeVariableFromOp(FunctionPtr peepholeOp)
         }
         else if (peepholeOp->Inputs()[i].IsConstant() || peepholeOp->Inputs()[i].IsParameter())
         {
-            if (peepholeVariable == Variable())
+            if (!peepholeVariable.IsInitialized())
                 peepholeVariable = peepholeOp->Inputs()[i];
             else
                 CNTK::LogicError("Cannot find peephole variable from peephole op. Multiple qualified variables found.");
         }
     }
 
-    if (peepholeVariable == Variable())
+    if (!peepholeVariable.IsInitialized())
         CNTK::LogicError("Cannot find peephole variable from peephole op.");
     return peepholeVariable;
 }
@@ -1174,7 +1170,7 @@ void TraceLSTMPathes(const FunctionPtr& src,
     string &f_activation,
     string &g_activation,
     string &h_activation,
-    bool &goBackwards,
+    LSTMDirection &direction,
     Variable &initStateH, 
     Variable &initStateC,
     Variable &peepholeCi,
@@ -1197,13 +1193,13 @@ void TraceLSTMPathes(const FunctionPtr& src,
 
     if (pastValueOps.size() == 2 && futureValueOps.size() == 0)
     {
-        goBackwards = false;
+        direction = LSTMDirection::Forward;
         initStateH = pastValueOps[0]->Inputs()[1];
         initStateC = pastValueOps[1]->Inputs()[1];
     }
     else if (pastValueOps.size() == 0 && futureValueOps.size() == 2)
     {
-        goBackwards = true;
+        direction = LSTMDirection::Backward;
         initStateH = futureValueOps[0]->Inputs()[1];
         initStateC = futureValueOps[1]->Inputs()[1];
     }
@@ -1361,7 +1357,7 @@ void CNTKToONNXHelper::PrepareLSTMInput(const Variable &X, std::vector<ONNXIR::N
 {
     Variable input;
     wstring opName = X.Owner() ? X.Owner()->OpName() : L"";
-    if (X.BlockFunctionVariableMapping() != Variable() && !Operators::IsRNNOp(ToString(opName)))
+    if (X.BlockFunctionVariableMapping().IsInitialized() && !Operators::IsRNNOp(ToString(opName)))
     {
         input = X.BlockFunctionVariableMapping();
     }
@@ -1375,7 +1371,7 @@ void CNTKToONNXHelper::PrepareLSTMInput(const Variable &X, std::vector<ONNXIR::N
     onnx::TypeProto inputArgType = ToTypeProto(input.Shape(), (int)(input.DynamicAxes().size()));
     
     // if (ToString(input.Uid()).find("Input") != -1 && !input.IsConstant() && !input.IsOutput())
-    if (input.IsInput() && HasSequenceAxis(input))
+    if (input.IsInput() && input.HasSequenceAxis())
         (*inputArgType.mutable_tensor_type()->mutable_shape()->mutable_dim())[0].set_dim_param(FreeSequenceDimParam);
 
     UpdateONNXType(input.GetDataType(), inputArgType);
@@ -1585,7 +1581,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
     }
     
     // order forward, backward
-    std::map<bool, int> directionCount({ { false, 0 } ,{ true, 0 } });
+    std::map<LSTMDirection, int> directionCount({ { LSTMDirection::Forward, 0 } ,{ LSTMDirection::Backward, 0 } });
 
     // The following construct refers to ONNX spec:
     // https://github.com/onnx/onnx/blob/master/docs/Operators.md#lstm
@@ -1614,28 +1610,28 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
         // src has to be an LSTM node. 
         const FunctionPtr& lstm = *itLSTMBlock;
         string f_activation, g_activation, h_activation;
-        bool goBackwards;
+        LSTMDirection direction;
         Variable initStateH, initStateC;
         Variable peepholeCi, peepholeCo, peepholeCf;
         double stabilizer_dh = 1, stabilizer_dc = 1, stabilizer_c = 1;
-        TraceLSTMPathes(lstm, f_activation, g_activation, h_activation, goBackwards,
+        TraceLSTMPathes(lstm, f_activation, g_activation, h_activation, direction,
             initStateH, initStateC,
             peepholeCi, peepholeCo, peepholeCf, stabilizer_dh, stabilizer_dc, stabilizer_c);
 
-        directionCount[goBackwards]++;
+        directionCount[direction]++;
 
-        int directionIndex = lstms.size() == 1 ? 0 : (goBackwards ? 1 : 0);
+        int directionIndex = lstms.size() == 1 ? 0 : (direction ? 1 : 0);
 
         initialHs[directionIndex] = initStateH;
         initialCs[directionIndex] = initStateC;
 
-        Ps[3 * directionIndex + 0] = peepholeCi;
-        Ps[3 * directionIndex + 1] = peepholeCo;
-        Ps[3 * directionIndex + 2] = peepholeCf;
+        Ps[LSTMPeepholeCount * directionIndex + LSTMPeepholeCountCiIndex] = peepholeCi;
+        Ps[LSTMPeepholeCount * directionIndex + LSTMPeepholeCountCoIndex] = peepholeCo;
+        Ps[LSTMPeepholeCount * directionIndex + LSTMPeepholeCountCfIndex] = peepholeCf;
 
-        activations[directionIndex * 3 + 0] = f_activation;
-        activations[directionIndex * 3 + 1] = g_activation;
-        activations[directionIndex * 3 + 2] = h_activation;
+        activations[directionIndex * LSTMActivationCount + LSTMActivationFIndex] = f_activation;
+        activations[directionIndex * LSTMActivationCount + LSTMActivationGIndex] = g_activation;
+        activations[directionIndex * LSTMActivationCount + LSTMActivationHIndex] = h_activation;
     
         std::vector<Variable> inputs = lstm->Inputs();
 
@@ -1643,27 +1639,25 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
         stabilizerDcCoefs[directionIndex] = stabilizer_dc;
         stabilizerCCoefs[directionIndex] = stabilizer_c;
 
-        // input, weight, hidden weight, and bias have fixed indices. 
+        // input (always the last one), weight, hidden weight, and bias have fixed indices. 
         // Thus we do not bother obtain them through traversing.
         int inputIndex = inputs.size() - 1;
-        const int weightIndex = 1, hiddenWeightIndex = 2, biasIndex = 0;
         Xs[directionIndex] = inputs[inputIndex];
 
-        Ws[directionIndex] = inputs[weightIndex];
-        Rs[directionIndex] = inputs[hiddenWeightIndex];
-        Bs[directionIndex] = inputs[biasIndex];
+        Ws[directionIndex] = inputs[CNTKLSTMWeightIndex];
+        Rs[directionIndex] = inputs[CNTKLSTMHiddenWeightIndex];
+        Bs[directionIndex] = inputs[CNTKLSTMBiasIndex];
 
         std::vector<Variable> outputs = lstm->Outputs();
 
-        // TODO: ONNX does not have an option equivalent to return_full_state. 
-        Yhs[directionIndex] = outputs[0];
-        Ycs[directionIndex] = outputs[1];
+        Yhs[directionIndex] = outputs[CNTKLSTMOutputYhIndex];
+        Ycs[directionIndex] = outputs[CNTKLSTMOutputChIndex];
     }
 
     // ensure that if there is one direction, it is not backward.
     // if there two directions, they are forward and backward, and
     // that the inputs (Xs) are the same.
-    if (std::any_of(directionCount.begin(), directionCount.end(), [](std::map<bool, int>::value_type &v) {return v.second > 1; }))
+    if (std::any_of(directionCount.begin(), directionCount.end(), [](std::map<LSTMDirection, int>::value_type &v) {return v.second > 1; }))
     {
         LogicError("LSTM node is invalid because there should be no more than one path in each direction.");
     }
@@ -1672,8 +1666,8 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
         LogicError("Bi-directional LSTM node is invalid because the two LSTM nodes do not share one same input.");
     }
 
-
-    string direction = lstms.size() == 2 ? "bidirectional" : (directionCount[true] == 1 ? "reverse" : "forward");
+    string direction = lstms.size() == 2 ? LSTMDirectionBidirection : 
+        (directionCount[LSTMDirection::Backward] == 1 ? LSTMDirectionReverse : LSTMDirectionForward);
 
     // TODO: following commented out attributes are not supported. Use default.
     // float clip; // no clip yet
@@ -1692,7 +1686,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
     PrepareLSTMWeightNode(graph, variableNodes, Rs, &stabilizerDhCoefs[0], nodeInputs);
     
     {
-        bool hasBias = Bs[0] != Variable();
+        bool hasBias = std::all_of(Bs.begin(), Bs.end(), [](Variable &v) {return v.IsInitialized(); });
         if (hasBias)
         {
             PrepareBiasNode(graph, variableNodes, Bs, nodeInputs);
@@ -1720,14 +1714,11 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
             nodeInputs.push_back(inputArg);
         }
 
-        bool has_initial_h = initialHs[0] != Variable();
+        bool has_initial_h = std::all_of(initialHs.begin(), initialHs.end(), [](Variable &v) {return v.IsInitialized(); }); 
         if (has_initial_h)
         {
             std::string hiddenUid = ToString(Yhs[0].Uid()) + "_initial_h";
             PrepareLSTMInitialStateNode(graph, variableNodes, initialHs, FreeBatchSize, hidden_size, hiddenUid, nodeInputs);
-
-            std::string cellUid = ToString(Ycs[0].Uid()) + "_initial_c";
-            PrepareLSTMInitialStateNode(graph, variableNodes, initialCs, FreeBatchSize, hidden_size, cellUid, nodeInputs);
         }
         else
         {
@@ -1735,14 +1726,21 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
                 ONNXIR::NodeArg inputArg("", nullptr);
                 nodeInputs.push_back(inputArg);
             }
-            {
-                ONNXIR::NodeArg inputArg("", nullptr);
-                nodeInputs.push_back(inputArg);
-            }
+        }
+
+        bool has_initial_c = std::all_of(initialCs.begin(), initialCs.end(), [](Variable &v) {return v.IsInitialized(); });
+        if (has_initial_c)
+        {
+            std::string cellUid = ToString(Ycs[0].Uid()) + "_initial_c";
+            PrepareLSTMInitialStateNode(graph, variableNodes, initialCs, FreeBatchSize, hidden_size, cellUid, nodeInputs);
+        } else
+        {
+            ONNXIR::NodeArg inputArg("", nullptr);
+            nodeInputs.push_back(inputArg);
         }
 
         // peephole
-        bool hasPeephole = Ps[0] != Variable();
+        bool hasPeephole = std::all_of(Ps.begin(), Ps.end(), [](Variable &v) {return v.IsInitialized(); });
         if (hasPeephole)
         {
             PrepareLSTMPeepholeNode(graph, variableNodes, Ps, stabilizerDcCoefs, stabilizerCCoefs, nodeInputs);
@@ -1966,7 +1964,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateNode(const FunctionPtr& src,
 
         for (const auto& output : src->Outputs())
         {
-            auto outputArgType = ToTypeProto(output.Shape(), output.HasBatchAxis(), HasSequenceAxis(output));
+            auto outputArgType = ToTypeProto(output.Shape(), output.HasBatchAxis(), output.HasSequenceAxis());
             UpdateONNXType(output.GetDataType(), outputArgType);
 
             ONNXIR::NodeArg outputArg(ToString(output.Uid()), &outputArgType);
@@ -2038,8 +2036,8 @@ ONNXIR::Node* CNTKToONNXHelper::CreateNode(const FunctionPtr& src,
                     // this is a workaround for brainscript models that have rank = 2 for BN inputs.
                     inputArgType = ToTypeProto(input.Shape().SubShape(0, input.Shape().Rank() - 1));
                 else
-                    inputArgType = ToTypeProto(input.Shape(), input.HasBatchAxis(), HasSequenceAxis(input));
-                if (input.IsInput() && HasSequenceAxis(input))
+                    inputArgType = ToTypeProto(input.Shape(), input.HasBatchAxis(), input.HasSequenceAxis());
+                if (input.IsInput() && input.HasSequenceAxis())
                     (*inputArgType.mutable_tensor_type()->mutable_shape()->mutable_dim())[0].set_dim_param(FreeSequenceDimParam);
             }
 
@@ -2129,7 +2127,7 @@ void CNTKToONNXHelper::TraverseGraph(const FunctionPtr& src,
                     LogicError("Node '%S': Placeholder isn't supported currently.", src->AsString().c_str());
             }
 
-            if (input != Variable() && input.IsOutput())
+            if (input.IsInitialized() && input.IsOutput())
                 TraverseGraph(input.Owner(), visited, compositeOutputsMap);
         }
     }
@@ -2553,7 +2551,7 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
             {
                 auto outputShape = (NDShape)src->Attributes()[L"outputShape"].Value<NDShape>();
                 node->AddAttribute("output_shape", ToINTS(outputShape, src->Inputs()[1].HasBatchAxis()));
-            }            
+            }
             PutAutopadOrPadAttrInNode(node, autoPadding, kernelShape);
         }
         else if (src->OpName() == L"Pooling")
@@ -2682,7 +2680,7 @@ ONNXIR::Node* CNTKToONNXHelper::AddNode(const FunctionPtr& src, ONNXIR::Graph* g
     if (L"Embedding" == src->OpName())
     {
         // WinML does not allow Cast between float and int. To workaround it, set workaroundWinMLNotSupportCastOfInt = true.
-        // otherwise use argmax, cast, gather whcih make more sense for an embedding operation.
+        // otherwise use argmax, cast, gather which make more sense for an embedding operation.
         bool workaroundWinMLNotSupportCastOfInt = true;
         if (workaroundWinMLNotSupportCastOfInt)
         {

@@ -244,6 +244,7 @@
     <ClCompile Include="proto\onnx\ONNXToCNTK.cpp" />
     <ClCompile Include="proto\onnx\Operators.cpp" />
     <ClCompile Include="proto\onnx\protobuf\onnx-ml.pb.cc.VS_wrapper.cpp" />
+    <ClCompile Include="proto\onnx\RNNHelper.cpp" />
     <ClCompile Include="Serialization.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>

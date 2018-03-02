@@ -567,7 +567,7 @@ def test_LSTM(tmpdir):
                                     initial_state = initial_state,
                                     cell_dim = cell_dim,
                                     self_stabilization = enable_self_stabilization)(x)
-        data = np.random.uniform(low=0.0, high=1.0, size=(1, 2, input_dim)).astype('f')
+        data = np.random.uniform(low=0.0, high=1.0, size=(batch_size, sequence_len, input_dim)).astype('f')
         verify_one_input(LSTMmodel, data, tmpdir, model_filename)
 
 #MatMul

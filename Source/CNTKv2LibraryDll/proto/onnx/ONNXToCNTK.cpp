@@ -725,7 +725,7 @@ std::vector<Variable> CreateRNNConstant(
             }
             return inputs;
         }
-        case LSTMInputIndexsequence_lens:
+        case LSTMInputIndexSequenceLens:
             // sequence length is treated as free dimension
             return inputs;
         case LSTMInputIndexinitial_h:
@@ -867,7 +867,7 @@ std::vector<Variable> ONNXToCNTKHelper::CreateRNNLeafVariableOrConstant(const No
         case LSTMInputIndexW: // W
         case LSTMInputIndexH: // R
         case LSTMInputIndexB: // B
-        case LSTMInputIndexsequence_lens: // sequence_lens
+        case LSTMInputIndexSequenceLens: // sequence_lens
         case LSTMInputIndexinitial_h: // initial_h
         case LSTMInputIndexinitial_c: // initial_c
         case LSTMInputIndexP: // P
@@ -2217,7 +2217,11 @@ std::vector<FunctionPtr> ONNXToCNTKHelper::FromONNXNode(const Node *node, ONNXTo
             ONNXToCNTKMap::iterator itNodeMap = constructedNodeMap.find(const_cast<Node *>(inputNode));
             if (itNodeMap != constructedNodeMap.end())
             {
-                inputs.insert(inputs.end(), itNodeMap->second.begin(), itNodeMap->second.end());
+                for (std::vector<FunctionPtr>::iterator itInput = itNodeMap->second.begin();
+                    itInput != itNodeMap->second.end(); ++itInput)
+                { 
+                    inputs.insert(inputs.end(), (*itInput)->Outputs()[0]);
+                }
             }
             else
             {

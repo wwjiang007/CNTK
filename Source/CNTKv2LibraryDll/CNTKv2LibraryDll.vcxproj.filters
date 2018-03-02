@@ -108,6 +108,9 @@
     <ClCompile Include="proto\onnx\protobuf\onnx-ml.pb.cc.VS_wrapper.cpp">
       <Filter>proto\onnx\protobuf</Filter>
     </ClCompile>
+    <ClCompile Include="proto\onnx\RNNHelper.cpp">
+      <Filter>proto\onnx</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stdafx.h" />
