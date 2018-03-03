@@ -2217,11 +2217,7 @@ std::vector<FunctionPtr> ONNXToCNTKHelper::FromONNXNode(const Node *node, ONNXTo
             ONNXToCNTKMap::iterator itNodeMap = constructedNodeMap.find(const_cast<Node *>(inputNode));
             if (itNodeMap != constructedNodeMap.end())
             {
-                for (std::vector<FunctionPtr>::iterator itInput = itNodeMap->second.begin();
-                    itInput != itNodeMap->second.end(); ++itInput)
-                { 
-                    inputs.insert(inputs.end(), (*itInput)->Outputs()[0]);
-                }
+                inputs.insert(inputs.end(), itNodeMap->second.begin(), itNodeMap->second.end());
             }
             else
             {

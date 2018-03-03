@@ -229,7 +229,7 @@ FunctionPtr CreateLSTM(const ONNXIR::Node *node, const std::vector<Variable> &in
         // the first a few inputs are (in order): X, numDirections * W, numDirections * R
         Variable X = inputs[0];
         Variable W = inputs[1 + dir];
-        Variable R = inputs[numDirections == 1 ? 2 : (3 + dir)];
+        Variable R = inputs[1 + numDirections + dir];
         Variable B;
         std::vector<Variable> biasVariables = FindByNameHint(inputs, LSTMInputBiasNameHint);
         if (numDirections == 1 && biasVariables.size() >= 1)
@@ -242,7 +242,12 @@ FunctionPtr CreateLSTM(const ONNXIR::Node *node, const std::vector<Variable> &in
 
         std::vector<Variable> peepholeVariables = FindByNameHint(inputs, LSTMInputPeepholeNameHint);
         Variable Ci, Cf, Co;
-        if (numDirections == 1 && peepholeVariables.size() >= 3)
+        if (peepholeVariables.size() != 0 && peepholeVariables.size() != LSTMPeepholeCount && peepholeVariables.size() != 2 * LSTMPeepholeCount)
+        {
+            CNTK::LogicError("Peephole Variable count (%d) should be 0, 1 or 2 times the number of peephole factors (%d).",
+                peepholeVariables.size(), LSTMPeepholeCount);
+        }
+        else if (numDirections == 1 && peepholeVariables.size() >= LSTMPeepholeCount)
         {
             Ci = peepholeVariables[LSTMPeepholeCountCiIndex];
             Co = peepholeVariables[LSTMPeepholeCountCoIndex];
@@ -255,6 +260,11 @@ FunctionPtr CreateLSTM(const ONNXIR::Node *node, const std::vector<Variable> &in
             Cf = peepholeVariables[LSTMPeepholeCount + LSTMPeepholeCountCfIndex];
         }
 
+        // ONNX spec https://github.com/onnx/onnx/blob/master/docs/Operators.md#inputs-3---8
+        // tells that weight has shape [num_directions, 4*hidden_size, input_size]
+        // here in CNTK, there is no direction axis because CNTK treats bidirectional LSTM 
+        // as two separate LSTM. Therefore we can divide the dimension of the first axis 
+        // by 4 to get the hidden size.
         int hiddenDim = W.Shape()[0] / 4;
 
         FunctionPtr outputH;
