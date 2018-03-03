@@ -3915,7 +3915,7 @@ def cast(node_input, dtype, name=''):
     return cast(arg_node_input, arg_dtype, name)
 
 @typemap
-def mean_variance_normalization(operand, use_stats_across_channels = False, do_variance_scaling = True, name=''):
+def mean_variance_normalization(operand, use_stats_across_channels=False, do_variance_scaling=True, epsilon=0.00001, name=''):
     '''
     Computes mean-variance normalization of the specified input operand. 
 
@@ -3948,11 +3948,14 @@ def mean_variance_normalization(operand, use_stats_across_channels = False, do_v
          If True, mean and variance are computed over the entire tensor (all axes).
         do_variance_scaling (bool): If False, only the mean is subtracted. If True, it is also
          scaled by inverse of standard deviation.
+        epsilon (float, default 0.00001): epsilon added to the standard deviation to avoid division by 0
         name (str, optional): the name of the Function instance in the network
     Returns:
         :class:`~cntk.ops.functions.Function`
     
     '''
     from cntk.cntk_py import mean_variance_normalization
+    if epsilon < 0:
+        raise ValueError('epsilon must be non-negative.')
     operand = sanitize_input(operand, get_data_type(operand))  
-    return mean_variance_normalization(operand, use_stats_across_channels, do_variance_scaling, name)
+    return mean_variance_normalization(operand, use_stats_across_channels, do_variance_scaling, epsilon, name)
