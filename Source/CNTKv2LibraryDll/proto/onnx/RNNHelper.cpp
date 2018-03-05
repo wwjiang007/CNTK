@@ -245,7 +245,7 @@ FunctionPtr CreateLSTM(const ONNXIR::Node *node, const std::vector<Variable> &in
         if (peepholeVariables.size() != 0 && peepholeVariables.size() != LSTMPeepholeCount && peepholeVariables.size() != 2 * LSTMPeepholeCount)
         {
             CNTK::LogicError("Peephole Variable count (%d) should be 0, 1 or 2 times the number of peephole factors (%d).",
-                peepholeVariables.size(), LSTMPeepholeCount);
+                (int)(peepholeVariables.size()), (int)LSTMPeepholeCount);
         }
         else if (numDirections == 1 && peepholeVariables.size() >= LSTMPeepholeCount)
         {
