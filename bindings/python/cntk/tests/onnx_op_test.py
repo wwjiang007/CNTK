@@ -517,28 +517,17 @@ def CreateLSTMModel(activation,
         Recurrence(LSTM(cell_dim, 
                         use_peepholes = peepholes, 
                         activation = activation,    
-                        enable_self_stabilization = self_stabilization),   
-                   initial_state = initial_state),
-                (Recurrence(LSTM(cell_dim, 
-                                 use_peepholes = peepholes, 
-                                 activation = activation,  
-                                 enable_self_stabilization = self_stabilization),  
-                            initial_state = initial_state, go_backwards=False),   
-                 Recurrence(LSTM(cell_dim, 
-                                 use_peepholes = peepholes, 
-                                 activation = activation,  
-                                 enable_self_stabilization = self_stabilization),  
-                            initial_state = initial_state, go_backwards=True)),   
-                            splice
+                        enable_self_stabilization = self_stabilization),    
+                   initial_state = initial_state)
                             ])
 
 # lstm attributes
-use_peepholes_options = [False, True]
-enable_self_stabilization_options = [False, True]
-activation_options = [C.tanh, C.relu]
+use_peepholes_options = [False]
+enable_self_stabilization_options = [False]
+activation_options = [C.tanh]
 
 #Recurrence attributes
-initial_state_options = [0, 0.1]
+initial_state_options = [0]
 
 input_dim = 2
 cell_dim = 3
