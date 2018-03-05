@@ -37,6 +37,17 @@ void LTNoRandomizer::RefillSequenceWindow(SequenceWindow& window)
     auto numberOfWorkers = Config().m_numberOfWorkers;
     if (numberOfWorkers > 1)
     {
+        size_t oldSize = window.m_sequences.size();
+        if (window.m_sequences.size() < numberOfWorkers)
+        {
+            window.m_sequences.resize(numberOfWorkers);
+            for (size_t i = oldSize; i < numberOfWorkers; ++i)
+            {
+                // Use last sequence as padding.
+                window.m_sequences[i] = window.m_sequences[oldSize - 1];
+            }
+        }
+
         // Decimate according to the position.
         size_t workerSequencePosition = 0;
         for (size_t i = 0; i < window.m_sequences.size(); ++i, ++m_currentSequencePosition)
@@ -44,7 +55,6 @@ void LTNoRandomizer::RefillSequenceWindow(SequenceWindow& window)
             if (m_currentSequencePosition % numberOfWorkers == Config().m_workerRank)
                 std::swap(window.m_sequences[workerSequencePosition++], window.m_sequences[i]);
         }
-
         window.m_sequences.erase(window.m_sequences.begin() + workerSequencePosition);
     }
 
