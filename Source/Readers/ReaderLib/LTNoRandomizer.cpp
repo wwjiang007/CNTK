@@ -37,6 +37,7 @@ void LTNoRandomizer::RefillSequenceWindow(SequenceWindow& window)
     auto numberOfWorkers = Config().m_numberOfWorkers;
     if (numberOfWorkers > 1)
     {
+        /*
         size_t oldSize = window.m_sequences.size();
         if (window.m_sequences.size() < numberOfWorkers)
         {
@@ -46,7 +47,7 @@ void LTNoRandomizer::RefillSequenceWindow(SequenceWindow& window)
                 // Use last sequence as padding.
                 window.m_sequences[i] = window.m_sequences[oldSize - 1];
             }
-        }
+        }*/
 
         // Decimate according to the position.
         size_t workerSequencePosition = 0;
