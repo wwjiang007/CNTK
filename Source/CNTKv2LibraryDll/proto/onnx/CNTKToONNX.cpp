@@ -849,6 +849,9 @@ ONNXIR::Node* CNTKToONNXHelper::CreateNode(const FunctionPtr& src,
     if (iter != functionNodes.end())
         return iter->second;
 
+    if (src->Uid() == L"Block833")
+        printf("I am here.");
+
     ONNXIR::Node* functionNode = nullptr;
     std::string opName = ToString(src->OpName());
 
@@ -1781,6 +1784,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
     }
     UpdateONNXType(ornnOutput.GetDataType(), ornnOutputArgType);
 
+    // IMP: To keep the input name as below.
     std::string ornnInputName = ToString(ornnInput.Uid());
     auto inputItr = compositeOutputsMap.find(ornnInput);
     if (inputItr != compositeOutputsMap.end())
@@ -1842,12 +1846,13 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
 
         // Output arguments
         int64_t outputSequence = 1; // For now, we always output Y. So this attribute value is 1.
-        auto outArgName = ToString(Wcombined.Uid()) + "_Output_Y_" + std::to_string(i);
+        //IMP: To keep the output arg name the same.
+        auto outArgName = (i == numLayers-1) ? ToString(ornnOutput.Uid()) : ToString(ornnOutput.Uid()) + "_" + std::to_string(i); //  ToString(Wcombined.Uid()) + "_Output_Y_" + std::to_string(i);
         ONNXIR::NodeArg outputArg_Y(outArgName, &ornnOutputArgType);
         outputs.push_back(outputArg_Y);
 
         // Dummy output arg Y_h
-        auto outputYhArgName = ToString(Wcombined.Uid()) + "_Output_Y_h_" + std::to_string(i);
+        auto outputYhArgName = ToString(ornnOutput.Uid()) + "_Y_h_" + std::to_string(i);
         // ONNXIR::NodeArg outputArg_Yh(outputYhArgName, nullptr);
         auto outputYhArgType = ToTypeProto(std::vector<int>({ 1, 1, static_cast<int>(hiddenSize) }), false);
         UpdateONNXType(ornnOutput.GetDataType(), outputYhArgType);
@@ -1855,7 +1860,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
         outputs.push_back(outputArg_Yh);
 
         // Dummy output arg Y_c
-        auto outputYcArgName = ToString(Wcombined.Uid()) + "_Output_Y_c_" + std::to_string(i);
+        auto outputYcArgName = ToString(ornnOutput.Uid()) + "_Y_c_" + std::to_string(i);
         // ONNXIR::NodeArg outputArg_Yc(outputYcArgName, nullptr);
         auto outputYcArgType = ToTypeProto(std::vector<int>({ 1, 1, static_cast<int>(hiddenSize) }), false);
         UpdateONNXType(ornnOutput.GetDataType(), outputYcArgType);
@@ -1876,7 +1881,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateONNXNodesForOptimizedRNNStack(const Functi
         functionNode->AddAttribute("output_sequence", outputSequence);
 
         layerInputOperandArg = outputArg_Y; // Output of this layer is the input to the next layer in the loop.
-        inputNeedsShapeAdapter = true; // To enable shapoe adapter to allow stacking for next layer. 
+        inputNeedsShapeAdapter = true; // To enable shape adapter to allow stacking for next layer. 
     }
 
     /*if (ornnInput.IsOutput())
