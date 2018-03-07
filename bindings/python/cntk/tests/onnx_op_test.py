@@ -676,6 +676,25 @@ def test_Neg(tmpdir):
     model = C.negate(data0)
     verify_no_input(model, tmpdir, 'Neg_0')
 
+#OptimizedRNNStack
+def test_OptimizedRNNStack(tmpdir):
+    from _cntk_py import constant_initializer
+    test_configs = ((True, 1, 2, 3), (True, 2, 2, 3), (True, 2, 4, 8), (True, 2, 6, 8), 
+                    (True, 4, 2, 3), (False, 1, 1, 8), (False, 1, 2, 3), (False, 1, 4, 8),
+                    (False, 2, 2, 3), (False, 2, 6, 8), (False, 4, 4, 8))
+    for config in test_configs:
+        bidirectional = config[0]
+        num_layers = config[1]
+        input_size = config[2]
+        hidden_size = config[3]
+        model_filename = 'optimized_rnn_stack_' + ('bi' if bidirectional else 'uni') + '_layers' + str(num_layers) + '_inp' + str(input_size) + '_hid' + str(hidden_size)
+        W = C.parameter((C.InferredDimension, input_size), constant_initializer(0.1))
+        x = C.sequence.input_variable(shape=(input_size,))
+        s = np.asarray(np.random.uniform(-1, 1, (5,input_size)), dtype=np.float32)
+        f = C.optimized_rnnstack(x, W, hidden_size, num_layers, bidirectional=bidirectional, name='MyRnnStack')
+        f.parameters[0].value = np.reshape(np.arange(np.prod(f.parameters[0].value.shape), dtype=np.float32), f.parameters[0].value.shape)
+        verify_one_input(f, s, tmpdir, model_filename)
+
 #Pad
 def test_Pad(tmpdir):
     shape = (4, 5)
