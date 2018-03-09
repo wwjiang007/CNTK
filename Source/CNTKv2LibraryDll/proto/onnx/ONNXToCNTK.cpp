@@ -2198,6 +2198,11 @@ FunctionPtr ONNXToCNTKHelper::CreateFunction(const Node *node, const std::vector
         size_t normalizeVariance = GetNamedAttributeAsInt64(node, "normalize_variance", 1);
         return MeanVarianceNormalization(inputs[0], !!acrossChannels, !!normalizeVariance, ToWString(node->Name()));
     }
+    else if (onnxOpName == "Identity")
+    {
+        FunctionPtr cntkFunction = Alias(inputs[0], ToWString(node->Name()));
+        return cntkFunction;
+    }
     else
     {
         LogicError("ONNX (%s) is not supported in CNTK", onnxOpName.c_str());

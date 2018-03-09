@@ -135,6 +135,9 @@ namespace CNTK
             std::set<FunctionPtr>& visited,
             std::unordered_map<Variable, Variable>& compositeOutputsMap);
 
+        // Remove it after testing.
+        static void CNTKToONNXHelper::PrintNDArrayView(const NDArrayViewPtr src);
+
         //
         // Copy the content of NDArrayView to TensorProto, and do the needed
         // convergence.
@@ -361,6 +364,37 @@ void CNTKToONNXHelper::Copy(const FunctionPtr& src, ONNXIR::Graph* dst)
     // in ONNX graph.
     //
     CreateNode(src, dst, functionNodes, variableNodes, compositeOutputsMap);
+}
+
+void CNTKToONNXHelper::PrintNDArrayView(const NDArrayViewPtr src)
+{
+    auto dataType = src->GetDataType();
+    auto srcTemp = src->DeepClone();
+    auto srcShape = srcTemp->Shape();
+    auto totalSize = srcShape.TotalSize();
+
+    // This is our own copy so move it to the CPU.
+    srcTemp->ChangeDevice(DeviceDescriptor::CPUDevice());
+
+    switch (dataType)
+    {
+    case DataType::Float:
+    {
+        auto data = srcTemp->DataBuffer<float>();
+        for (size_t index = 0; index < totalSize; index++)
+            printf(" %0.4f ", data[index]);
+        break;
+    }
+    case DataType::Double:
+    {
+        auto data = srcTemp->DataBuffer<double>();
+        for (size_t index = 0; index < totalSize; index++)
+            printf(" %0.4f ", data[index]);
+        break;
+    }
+    default:
+        NOT_IMPLEMENTED;
+    }
 }
 
 // LSTM gate bias order difference between CNTK (icfo) and ONNX (iofc) is 
@@ -3263,7 +3297,7 @@ CNTKToONNXHelper::SplitOptimzedRnnWtoIndivMats(Matrix<float>& WbigIn,
         offset += layerInputSize * hiddenSize * numGates;
         W.push_back(Matrix<float>(fW, -1));
         Matrix<float> fR = GetWeightMatFromOrnnBigW(Wbig, offset, hiddenSize, hiddenSize, numGates, recurrentOp);
-        fR = GetWeightMatFromOrnnBigW(Wbig, offset, hiddenSize, hiddenSize, numGates, recurrentOp);
+        // fR = GetWeightMatFromOrnnBigW(Wbig, offset, hiddenSize, hiddenSize, numGates, recurrentOp);
         offset += hiddenSize * hiddenSize * numGates;
         R.push_back(Matrix<float>(fR, -1));
         /*printf("\nLayer %zu - fR--------\n", i);
@@ -3320,7 +3354,23 @@ CNTKToONNXHelper::SplitOptimzedRnnWtoIndivMats(Matrix<float>& WbigIn,
     // Step 5: Convert bias matrices into NDArrayView;
     std::vector<NDArrayViewPtr> Bonnx = ToRnnBiasPerLayerOnnxFormat(B, numLayers, numDirections, hiddenSize, numGates);
 
-    /*printf("\n Bonnx[0] outside--------------\n");
+    /*printf("\n Wonnx[0] outside--------------\n");
+    PrintNDArrayView(Wonnx[0]);
+    printf("--------------------------------\n");
+
+    printf("\n Wonnx[1] outside--------------\n");
+    PrintNDArrayView(Wonnx[1]);
+    printf("--------------------------------\n");
+
+    printf("\n Ronnx[0] outside--------------\n");
+    PrintNDArrayView(Ronnx[0]);
+    printf("--------------------------------\n");
+
+    printf("\n Ronnx[1] outside--------------\n");
+    PrintNDArrayView(Ronnx[1]);
+    printf("--------------------------------\n");
+
+    printf("\n Bonnx[0] outside--------------\n");
     PrintNDArrayView(Bonnx[0]);
     printf("--------------------------------\n");
 
@@ -3345,9 +3395,9 @@ Matrix<float> CNTKToONNXHelper::GetWeightMatFromOrnnBigW(Matrix<float>& Wbig, si
     // auto W = W0.Transpose(); // Confirmed: This is a deep copy. Have to do this because Matrix::InplaceTranspose is not implemented.
     if (recurrentOp == L"lstm") // rnnReLU and rnnTanh have one gate so reordering is moot.
         InplaceAdjustGateOrder(W0, layerOutputSize);
-    //printf("\n---------W0 rearranged--------\n");
-    //W0.Print();
-    //printf("---------------------\n");
+    /*printf("\n---------W0 rearranged--------\n");
+    W0.Print();
+    printf("---------------------\n");*/
     return W0;
 }
 
@@ -3430,7 +3480,8 @@ std::vector<NDArrayViewPtr> CNTKToONNXHelper::ToRnnWeightPerLayerOnnxFormat(std:
         size_t offset = 0;
         for (size_t j = 0; j < numDirections; ++j)
         {
-            Matrix<float> temp = W[i*numDirections + j].Transpose(); // Have to do this because Matrix::InplaceTranspose is not implemented.
+            // Matrix<float> temp = W[i*numDirections + j].Transpose(); // Have to do this because Matrix::InplaceTranspose is not implemented.
+            Matrix<float> temp(W[i*numDirections + j].GetNumCols(), W[i*numDirections + j].GetNumRows(), W[i*numDirections + j].Data(), -1); 
             currLayerWeightMatrix.SetColumnSlice(temp, offset, layerInputSize);
             offset += layerInputSize;
         }
@@ -3466,7 +3517,8 @@ std::vector<NDArrayViewPtr> CNTKToONNXHelper::ToRnnBiasPerLayerOnnxFormat(std::v
         size_t offset = 0;
         for (size_t j = 0; j < numDirections; ++j)
         {
-            Matrix<float> temp = B[i*numDirections + j].Transpose(); // Have to do this because Matrix::InplaceTranspose is not implemented.
+            // Matrix<float> temp = B[i*numDirections + j].Transpose(); // Have to do this because Matrix::InplaceTranspose is not implemented.
+            Matrix<float> temp(B[i*numDirections + j].GetNumCols(), B[i*numDirections + j].GetNumRows(), B[i*numDirections + j].Data(), -1);
             currLayerBiasMatrix.SetColumnSlice(temp, offset, 1);
             ++offset;
         }

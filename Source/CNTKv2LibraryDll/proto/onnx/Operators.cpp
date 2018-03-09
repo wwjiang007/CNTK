@@ -383,6 +383,9 @@ namespace ONNX
         { L"NoOp",{ {
             { L"NoOp", "Identity" },
             } } },
+        { L"Alias",{ {
+            { L"Alias", "Identity" },
+            } } },
     };
 
     // given a cntkOpName and cntk attribute OpName which is saved in CNTK::Function's attribute,
