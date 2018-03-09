@@ -112,15 +112,27 @@ namespace CNTK
             std::unordered_map<FunctionPtr, ONNXIR::Node*>& functionNodes,
             std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
             const std::unordered_map<Variable, Variable>& compositeOutputsMap);
+        static ONNXIR::Node *CreateGRUNode(const FunctionPtr &src,
+            ONNXIR::Graph* graph,
+            std::unordered_map<FunctionPtr, ONNXIR::Node*>& functionNodes,
+            std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
+            const std::unordered_map<Variable, Variable>& compositeOutputsMap);
 
         static void PrepareLSTMInput(const Variable &X, std::vector<ONNXIR::NodeArg> &nodeInputs);
         static void PrepareLSTMInitialStateNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
             const std::vector<Variable> &initialVariables, int batchSize, int cellSize, 
             const std::string &uid, std::vector<ONNXIR::NodeArg> &nodeInputs);
 
+        static void PrepareGRUWeightNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
+            const std::vector<Variable> &Ws, std::vector<ONNXIR::NodeArg> &nodeInputs);
+        static void PrepareGRUZRHWeightNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
+            const std::vector<Variable> &Rs, const std::vector<Variable> &Rh1s, std::vector<ONNXIR::NodeArg> &nodeInputs);
+        static void PrepareGRUBiasNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
+            const std::vector<Variable> &Bs, std::vector<ONNXIR::NodeArg> &nodeInputs);
+
         static void PrepareLSTMWeightNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
             const std::vector<Variable> &Ws, double *stabilizerConstants, std::vector<ONNXIR::NodeArg> &nodeInputs);
-        static void PrepareBiasNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
+        static void PrepareLSTMBiasNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
             const std::vector<Variable> &Ws, std::vector<ONNXIR::NodeArg> &nodeInputs);
         static void PrepareLSTMPeepholeNode(ONNXIR::Graph* graph,
             std::unordered_map<Variable, ONNXIR::Node*>& variableNodes, const std::vector<Variable> &Ps,
@@ -139,9 +151,19 @@ namespace CNTK
         //
         static void CopyTensor(const NDArrayViewPtr src, onnx::TensorProto& dst, onnx::TypeProto *inputArgType = nullptr);
 
-        static void CopyTensorsWithMultipliers(const std::vector<NDArrayViewPtr> srcTensors, const std::vector<double> multipliers,
+        static void CopyTensorsWithMultipliers(const std::vector<NDArrayViewPtr> &srcTensors, const std::vector<double> &multipliers,
             onnx::TensorProto& dst, onnx::TypeProto *inputArgType);
 
+
+        static void CopyGRUBiasTensors(const std::vector<NDArrayViewPtr> &srcTensors, 
+            onnx::TensorProto& dst, onnx::TypeProto *inputArgType);
+
+        static void CopyGRUWeightTensors(const std::vector<NDArrayViewPtr> &srcTensors,
+            onnx::TensorProto& dst, onnx::TypeProto *inputArgType);
+
+        static void CopyGRUStateWeightTensors(
+            const std::vector<NDArrayViewPtr> &srcZRTensors, const std::vector<NDArrayViewPtr> &srcHTensors,
+            onnx::TensorProto& dst, onnx::TypeProto *inputArgType);
 
         static void FillTensorWithScalar(const std::vector<NDArrayViewPtr>& src, onnx::TensorProto& dst, const std::vector<int> dstShape);
 
@@ -150,6 +172,9 @@ namespace CNTK
         //
         static void CopyTensorsWithCNTKToONNXLSTMWeightLayoutConversion(const std::vector<NDArrayViewPtr> &src, double *stabilizerConstants,
             onnx::TensorProto& dst, onnx::TypeProto *inputArgType);
+
+        static void CopyShapeTypeProtoToTensorProto(onnx::TypeProto *inputArgType, onnx::TensorProto& dst);
+
         //
         // Copy supported attributes from CNTK node to corresponding ONNX node.
         //
@@ -299,6 +324,28 @@ void CNTKToONNXHelper::Copy(const FunctionPtr& src, ONNXIR::Graph* dst)
     CreateNode(src, dst, functionNodes, variableNodes, compositeOutputsMap);
 }
 
+void AddDataElementArrayViewToTensorProto(NDArrayViewPtr src, int srcIndex, onnx::TensorProto& dst)
+{
+    DataType dataType = src->GetDataType();
+    switch (dataType)
+    {
+    case DataType::Float:
+    {
+        auto data = src->DataBuffer<float>();
+        *(dst.mutable_float_data()->Add()) = data[srcIndex];
+    }
+    break;
+    case DataType::Double:
+    {
+        auto data = src->DataBuffer<double>();
+        *(dst.mutable_double_data()->Add()) = data[srcIndex];
+    }
+    break;
+    default:
+        NOT_IMPLEMENTED;
+    }
+}
+
 // LSTM gate bias order difference between CNTK (icfo) and ONNX (iofc) is 
 // handled while building ONNX LSTM bias tensor.  
 template<typename DType>
@@ -402,16 +449,8 @@ void AppendCNTKWeightToONNXTensor(DType *data, const NDShape &shape, onnx::Tenso
     }
 }
 
-void CNTKToONNXHelper::CopyTensorsWithCNTKToONNXLSTMWeightLayoutConversion(const std::vector<NDArrayViewPtr> &src, double *stabilizerConstants,
-    onnx::TensorProto& dst, onnx::TypeProto *inputArgType)
+void SetTensorType(onnx::TensorProto& dst, DataType dataType)
 {
-    // TODO: all NDArrayViewPtr shall have the same shape and data types.
-    if (src.empty())
-    {
-        // TODO: error
-        return;
-    }
-    auto dataType = src[0]->GetDataType();
     switch (dataType)
     {
     case DataType::Float:
@@ -423,6 +462,26 @@ void CNTKToONNXHelper::CopyTensorsWithCNTKToONNXLSTMWeightLayoutConversion(const
     default:
         NOT_IMPLEMENTED;
     }
+}
+
+void CNTKToONNXHelper::CopyShapeTypeProtoToTensorProto(onnx::TypeProto *inputArgType, onnx::TensorProto& dst)
+{
+    std::vector<int64_t> dimensions = CNTKToONNXHelper::ToINTS(*inputArgType);
+    for (auto dim : dimensions)
+        *(dst.mutable_dims()->Add()) = dim;
+}
+
+void CNTKToONNXHelper::CopyTensorsWithCNTKToONNXLSTMWeightLayoutConversion(const std::vector<NDArrayViewPtr> &src, double *stabilizerConstants,
+    onnx::TensorProto& dst, onnx::TypeProto *inputArgType)
+{
+    // TODO: all NDArrayViewPtr shall have the same shape and data types.
+    if (src.empty())
+    {
+        // TODO: error
+        return;
+    }
+    auto dataType = src[0]->GetDataType();
+    SetTensorType(dst, dataType);
 
     for (int i = 0; i < src.size(); i++)
     {
@@ -453,21 +512,24 @@ void CNTKToONNXHelper::CopyTensorsWithCNTKToONNXLSTMWeightLayoutConversion(const
         }
     }
 
-    std::vector<int64_t> dimensions = CNTKToONNXHelper::ToINTS(*inputArgType);
-    for (auto dim : dimensions)
-        *(dst.mutable_dims()->Add()) = dim;
+    CopyShapeTypeProtoToTensorProto(inputArgType, dst);
 }
 
-void CNTKToONNXHelper::CopyTensorsWithMultipliers(const std::vector<NDArrayViewPtr> srcTensors, 
-    const std::vector<double> multipliers, 
+void CNTKToONNXHelper::CopyTensorsWithMultipliers(const std::vector<NDArrayViewPtr> &srcTensors, 
+    const std::vector<double> &multipliers, 
     onnx::TensorProto& dst, onnx::TypeProto *inputArgType)
 {
     // TODO: verify that srcTensors has consistant shapes
+    if (multipliers.size() != srcTensors.size())
+        LogicError("To apply multiplier when copying tensors, number of multipliers must be the same as number of tensors.");
+
     for (int viewIndex = 0; viewIndex < srcTensors.size(); viewIndex++)
     {
         auto view = srcTensors[viewIndex];
         double multiplier = multipliers[viewIndex];
         auto dataType = view->GetDataType();
+        SetTensorType(dst, dataType);
+
         auto srcTemp = view->DeepClone();
         auto srcShape = srcTemp->Shape();
         auto totalSize = srcShape.TotalSize();
@@ -476,16 +538,14 @@ void CNTKToONNXHelper::CopyTensorsWithMultipliers(const std::vector<NDArrayViewP
         {
         case DataType::Float:
         {
-            dst.set_data_type(onnx::TensorProto_DataType_FLOAT);
             auto data = srcTemp->DataBuffer<float>();
             for (size_t index = 0; index < totalSize; index++)
-                *(dst.mutable_float_data()->Add()) = (float) (data[index] * multiplier);
+                *(dst.mutable_float_data()->Add()) = (float)(data[index] * multiplier);
 
             break;
         }
         case DataType::Double:
         {
-            dst.set_data_type(onnx::TensorProto_DataType_DOUBLE);
             auto data = srcTemp->DataBuffer<double>();
             for (size_t index = 0; index < totalSize; index++)
                 *(dst.mutable_double_data()->Add()) = data[index] * multiplier;
@@ -497,9 +557,144 @@ void CNTKToONNXHelper::CopyTensorsWithMultipliers(const std::vector<NDArrayViewP
         }
     }
 
-    std::vector<int64_t> dimensions = CNTKToONNXHelper::ToINTS(*inputArgType);
-    for (auto dim : dimensions)
-        *(dst.mutable_dims()->Add()) = dim;
+    CopyShapeTypeProtoToTensorProto(inputArgType, dst);
+}
+
+void CNTKToONNXHelper::CopyGRUBiasTensors(const std::vector<NDArrayViewPtr> &srcTensors,
+    onnx::TensorProto& dst, onnx::TypeProto *inputArgType)
+{
+    if (srcTensors.empty())
+        return;
+
+    DataType dataType = srcTensors[0]->GetDataType();
+    SetTensorType(dst, dataType);
+
+    for (int i = 0; i < srcTensors.size(); i++)
+    {
+        auto srcTemp = srcTensors[i]->DeepClone();
+        auto srcShape = srcTemp->Shape();
+
+        // This is our own copy so move it to the CPU.
+        srcTemp->ChangeDevice(DeviceDescriptor::CPUDevice());
+
+        auto totalSize = srcShape.TotalSize();
+        for (size_t index = 0; index < totalSize; index++)
+        {
+            AddDataElementArrayViewToTensorProto(srcTemp, index, dst);
+        }
+
+        // fill zeros for Rb[zrh] because CNTK GRU does not support Rb.
+        for (size_t index = 0; index < totalSize; index++)
+            switch (dataType)
+            {
+            case DataType::Float:
+            {
+                *(dst.mutable_float_data()->Add()) = 0;
+            }
+            break;
+            case DataType::Double:
+            {
+                *(dst.mutable_double_data()->Add()) = 0;
+            }
+            break;
+            }
+    }
+
+    CopyShapeTypeProtoToTensorProto(inputArgType, dst);
+}
+
+void CNTKToONNXHelper::CopyGRUWeightTensors(const std::vector<NDArrayViewPtr> &srcTensors,
+    onnx::TensorProto& dst, onnx::TypeProto *inputArgType)
+{
+    if (srcTensors.empty())
+        return;
+
+    DataType dataType = srcTensors[0]->GetDataType();
+    SetTensorType(dst, dataType);
+
+    for (int i = 0; i < srcTensors.size(); i++)
+    {
+        auto srcTemp = srcTensors[i]->DeepClone();
+        auto srcShape = srcTemp->Shape();
+
+        // This is our own copy so move it to the CPU.
+        srcTemp->ChangeDevice(DeviceDescriptor::CPUDevice());
+
+        auto totalSize = srcShape.TotalSize();
+        for (size_t targetIndex = 0; targetIndex < totalSize; targetIndex++)
+        {
+            int cell_size = srcShape[0] / 3;
+            int input_size = srcShape[1];
+
+            // row major layout
+            int row = targetIndex / input_size,
+                col = targetIndex % input_size;
+
+            // soruce is collum major
+            int srcIndex = 3 * cell_size * col + row;
+            AddDataElementArrayViewToTensorProto(srcTemp, srcIndex, dst);
+        }
+    }
+
+    CopyShapeTypeProtoToTensorProto(inputArgType, dst);
+}
+
+void CNTKToONNXHelper::CopyGRUStateWeightTensors(
+    const std::vector<NDArrayViewPtr> &srcZRTensors, const std::vector<NDArrayViewPtr> &srcHTensors,
+    onnx::TensorProto& dst, onnx::TypeProto *inputArgType)
+{
+    if (srcZRTensors.size() < 1 || srcZRTensors.size() > 2 || srcZRTensors.size() != srcHTensors.size())
+        LogicError("Invalid number of GRU weight tensors");
+
+    DataType dataType = srcZRTensors[0]->GetDataType();
+    SetTensorType(dst, dataType);
+
+    for (int i = 0; i < srcZRTensors.size(); i++)
+    {
+        auto srcZRTemp = srcZRTensors[i]->DeepClone();
+        auto srcZRShape = srcZRTemp->Shape();
+
+        auto srcHTemp = srcHTensors[i]->DeepClone();
+        auto srcHShape = srcHTemp->Shape();
+
+        int cell_size = srcZRShape[1];
+
+        // This is our own copy so move it to the CPU.
+        srcZRTemp->ChangeDevice(DeviceDescriptor::CPUDevice());
+        srcHTemp->ChangeDevice(DeviceDescriptor::CPUDevice());
+
+        auto totalSize = srcZRShape.TotalSize() + srcHShape.TotalSize();
+        for (size_t targetIndex = 0; targetIndex < totalSize; targetIndex++)
+        {
+            // row major layout
+            int row = targetIndex / cell_size,
+                col = targetIndex % cell_size;
+
+            int src_index;
+            NDArrayViewPtr srcBlockTensor;
+            int block = row / cell_size;
+            if (block == 0 || block == 1)
+            {
+                // zr blocks
+                srcBlockTensor = srcZRTemp;
+                src_index = 2 * cell_size * col + row;
+            }
+            else if (block == 2)
+            {
+                // h block
+                srcBlockTensor = srcHTemp;
+                src_index = cell_size * col + row - cell_size * 2;
+            }
+            else
+            {
+                LogicError("Invalid GRU state weight shape");
+            }
+
+            AddDataElementArrayViewToTensorProto(srcBlockTensor, src_index, dst);
+        }
+    }
+
+    CopyShapeTypeProtoToTensorProto(inputArgType, dst);
 }
 
 void CNTKToONNXHelper::CopyTensor(const NDArrayViewPtr src, onnx::TensorProto& dst, onnx::TypeProto *inputArgType /*=nullptr*/)
@@ -512,11 +707,12 @@ void CNTKToONNXHelper::CopyTensor(const NDArrayViewPtr src, onnx::TensorProto& d
     // This is our own copy so move it to the CPU.
     srcTemp->ChangeDevice(DeviceDescriptor::CPUDevice());
 
+    SetTensorType(dst, dataType);
+
     switch (dataType)
     {
     case DataType::Float:
     {
-        dst.set_data_type(onnx::TensorProto_DataType_FLOAT);
         auto data = srcTemp->DataBuffer<float>();
         for (size_t index = 0; index < totalSize; index++) 
             *(dst.mutable_float_data()->Add()) = data[index];
@@ -525,7 +721,6 @@ void CNTKToONNXHelper::CopyTensor(const NDArrayViewPtr src, onnx::TensorProto& d
     }
     case DataType::Double:
     {
-        dst.set_data_type(onnx::TensorProto_DataType_DOUBLE);
         auto data = srcTemp->DataBuffer<double>();
         for (size_t index = 0; index < totalSize; index++)
             *(dst.mutable_double_data()->Add()) = data[index];
@@ -539,9 +734,7 @@ void CNTKToONNXHelper::CopyTensor(const NDArrayViewPtr src, onnx::TensorProto& d
     // use 
     if (inputArgType != nullptr)
     {
-        std::vector<int64_t> dimensions = CNTKToONNXHelper::ToINTS(*inputArgType);
-        for (auto dim : dimensions)
-            *(dst.mutable_dims()->Add()) = dim;
+        CopyShapeTypeProtoToTensorProto(inputArgType, dst);
     }
     else
     {
@@ -990,366 +1183,28 @@ std::tuple<std::vector<int>, bool, int, bool> CNTKToONNXHelper::CalculateBroadca
         return make_tuple(dims2, broadCast, axis_start, swapInput);
     }
 
-axis_start = axis_start > 0 ? axis_start : 0;
+    axis_start = axis_start > 0 ? axis_start : 0;
 
-const std::vector<int> broadcaseInputDims = swapInput ? dims1 : dims2;
-// sanity check;
-for (int i = 0; i < broadcaseInputDims.size(); i++)
-{
-    if ((i < axis_start || i >= axis_stop) && broadcaseInputDims[i] != 1)
+    const std::vector<int> broadcaseInputDims = swapInput ? dims1 : dims2;
+    // sanity check;
+    for (int i = 0; i < broadcaseInputDims.size(); i++)
     {
-        LogicError("dimension %d cannot be broadcasted", i);
-    }
-    else if (i >= axis_start && i < axis_stop && dims1[i] != dims2[i])
-    {
-        LogicError("dimension %d cannot be broadcasted", i);
-    }
-}
-std::vector<int> dimensions;
-for (int i = axis_start; i < axis_stop; i++)
-{
-    dimensions.push_back(broadcaseInputDims[i]);
-}
-
-return make_tuple(dimensions, broadCast, axis_start, swapInput);
-}
-
-template <typename FunctionType>
-void TraverseGraphWithPrePostActions(FunctionPtr cntkFunction, std::unordered_set<FunctionPtr>& visitedFunctions,
-    FunctionType preFunctor, FunctionType postFunctor)
-{
-visitedFunctions.insert(cntkFunction);
-preFunctor(cntkFunction);
-
-std::vector<Variable> functionInputs = cntkFunction->Inputs();
-for (const auto& input : functionInputs)
-{
-    if (input.IsOutput() && visitedFunctions.find(input.Owner()) == visitedFunctions.end())
-    {
-        const auto& inputFunction = input.Owner();
-        TraverseGraphWithPrePostActions(inputFunction, visitedFunctions, preFunctor, postFunctor);
-    }
-}
-
-postFunctor(cntkFunction);
-}
-
-bool IsSupportedRNNActivation(const std::wstring &cntkOpName)
-{
-    static std::vector<std::wstring> supportedRNNActivations(
+        if ((i < axis_start || i >= axis_stop) && broadcaseInputDims[i] != 1)
         {
-            L"ReLU",
-            L"Tanh",
-            L"StableSigmoid"
-        });
-    return std::find(supportedRNNActivations.cbegin(), supportedRNNActivations.cend(), cntkOpName) !=
-        supportedRNNActivations.cend();
-}
-
-std::string FindActivation(const std::vector<FunctionPtr> &path, int nth)
-{
-    int count = 0;
-    for (std::vector<FunctionPtr>::const_iterator it = path.begin(); it != path.end(); it++)
-    {
-        std::wstring opName = (*it)->OpName();
-        if (IsSupportedRNNActivation(opName))
+            LogicError("dimension %d cannot be broadcasted", i);
+        }
+        else if (i >= axis_start && i < axis_stop && dims1[i] != dims2[i])
         {
-            if (count == nth)
-            {
-                std::unordered_multimap<std::wstring, AttributesMapping>::const_iterator itLookup = Operators::CntkToONNXLookup().find(opName);
-                if (itLookup == Operators::CntkToONNXLookup().cend())
-                    CNTK::LogicError("Invalid activation (%s)", ToString(opName).c_str());
-
-                std::unordered_map<std::wstring, std::string>::const_iterator itMap = (*itLookup).second.map.find(opName);
-                if (itMap == (*itLookup).second.map.cend())
-                    CNTK::LogicError("Invalid activation (%s)", ToString(opName).c_str());
-                return itMap->second;
-            }
-            count++;
+            LogicError("dimension %d cannot be broadcasted", i);
         }
     }
-    return "";
-}
-
-Variable GetPeepholeVariableFromOp(FunctionPtr peepholeOp)
-{
-    // peephole variable is that child of peepholeOp that is neither stabilizer nor place holder 
-    if (peepholeOp->OpName() != L"ElementTimes")
-        CNTK::LogicError("Peephole operation must be ElementTimes");
-
-    Variable peepholeVariable;
-    FunctionPtr stabilizerOp;
-    for (int i = 0; i < peepholeOp->Inputs().size(); i++)
+    std::vector<int> dimensions;
+    for (int i = axis_start; i < axis_stop; i++)
     {
-        if (peepholeOp->Inputs()[i].Owner() && peepholeOp->Inputs()[i].Owner()->OpName() == L"Stabilizer")
-        {
-            stabilizerOp = peepholeOp->Inputs()[i].Owner();
-        }
-        else if (peepholeOp->Inputs()[i].IsConstant() || peepholeOp->Inputs()[i].IsParameter())
-        {
-            if (!peepholeVariable.IsInitialized())
-                peepholeVariable = peepholeOp->Inputs()[i];
-            else
-                CNTK::LogicError("Cannot find peephole variable from peephole op. Multiple qualified variables found.");
-        }
+        dimensions.push_back(broadcaseInputDims[i]);
     }
 
-    if (!peepholeVariable.IsInitialized())
-        CNTK::LogicError("Cannot find peephole variable from peephole op.");
-    return peepholeVariable;
-}
-
-// this method helps getting a stabilizer op from its parent/grandparent op.
-// the parent op can be Times or ElementTimes. The grandparent op can be a plus op.
-FunctionPtr GetStabilizerOp(FunctionPtr parentOp)
-{
-    FunctionPtr timesOp;
-    if (parentOp->OpName() == L"Plus")
-    {
-        for (int i = 0; i < parentOp->Inputs().size(); i++)
-        {
-            if (parentOp->Inputs()[i].Owner() &&
-                (parentOp->Inputs()[i].Owner()->OpName() == L"Times" ||
-                    parentOp->Inputs()[i].Owner()->OpName() == L"ElementTimes"))
-            {
-                timesOp = parentOp->Inputs()[i].Owner();
-                break;
-            }
-        }
-    }
-    else if (parentOp->OpName() == L"Times" || parentOp->OpName() == L"ElementTimes")
-    {
-        timesOp = parentOp;
-    }
-
-    if (!timesOp)
-    {
-        CNTK::LogicError("Cannot find stabilizer op. A stabilizer op must be from Times or ElementTimes ops or skipped from a Plus op.");
-    }
-
-    for (int j = 0; j < timesOp->Inputs().size(); j++)
-    {
-        if (timesOp->Inputs()[j].Owner() && timesOp->Inputs()[j].Owner()->OpName() == L"Stabilizer")
-        {
-            return timesOp->Inputs()[j].Owner();
-        }
-    }
-
-    return nullptr;
-}
-
-double GetScaler(Variable variable)
-{
-    NDArrayViewPtr v = variable.IsParameter() ? Parameter(variable).Value() : Constant(variable).Value();
-    NDArrayViewPtr cpuV = v->DeepClone();
-    cpuV->ChangeDevice(DeviceDescriptor::CPUDevice());
-
-    switch (variable.GetDataType())
-    {
-    case DataType::Float:
-        return *((float *)cpuV->DataBuffer<float>());
-    case DataType::Double:
-        return *((double *)cpuV->DataBuffer<double>());
-    default:
-        NOT_IMPLEMENTED;
-    }
-}
-
-double GetStabilizerCoef(const FunctionPtr stabilizerDhOp)
-{
-    double alpha = GetScaler(stabilizerDhOp->Inputs()[3]);
-    double steepness = GetScaler(stabilizerDhOp->Inputs()[1]);
-    return (log(exp(alpha * steepness) + 1.0F) / steepness);
-}
-
-// A CNTK LSTM op is created with stacked matmul followed by a slice op for 4 gates. 
-// Slice order tells which graph path is for which gate. This method is 
-// to traverse the graph to find the 4 paths along the 4 gates. It helps to 
-// subsequently find needed attributes in order to build an ONNX LSTM op.
-void TraceLSTMPathes(const FunctionPtr& src,
-    string &f_activation,
-    string &g_activation,
-    string &h_activation,
-    LSTMDirection &direction,
-    Variable &initStateH, 
-    Variable &initStateC,
-    Variable &peepholeCi,
-    Variable &peepholeCo,
-    Variable &peepholeCf,
-    double &stabilizer_dh,
-    double &stabilizer_dc,
-    double &stabilizer_c)
-{
-    // src has to be an LSTM node. 
-    std::vector<Variable> inputVars = src->Inputs();
-    std::vector<FunctionPtr> pastValueOps, futureValueOps;
-    for (std::vector<Variable>::iterator it = inputVars.begin(); it != inputVars.end(); ++it)
-    {
-        if ((*it).Owner() != nullptr && (*it).Owner()->OpName() == L"PastValue")
-            pastValueOps.push_back((*it).Owner());
-        else if ((*it).Owner() != nullptr && (*it).Owner()->OpName() == L"FutureValue")
-            futureValueOps.push_back((*it).Owner());
-    }
-
-    if (pastValueOps.size() == 2 && futureValueOps.size() == 0)
-    {
-        direction = LSTMDirection::Forward;
-        initStateH = pastValueOps[0]->Inputs()[1];
-        initStateC = pastValueOps[1]->Inputs()[1];
-    }
-    else if (pastValueOps.size() == 0 && futureValueOps.size() == 2)
-    {
-        direction = LSTMDirection::Backward;
-        initStateH = futureValueOps[0]->Inputs()[1];
-        initStateC = futureValueOps[1]->Inputs()[1];
-    }
-    else
-    {
-        CNTK::LogicError("Node %s (%s) is not a valid LSTM node", ToString(src->Name()).c_str(), ToString(src->Uid()).c_str());
-    }
-
-    // set up traverse boundary
-    std::unordered_set<FunctionPtr> visitedFunctions;
-    for (std::vector<Variable>::const_iterator it = inputVars.begin(); it != inputVars.end(); it++)
-    {
-        visitedFunctions.insert(it->Owner());
-    }
-
-    // First find the peephole op node. 
-    // see CNTK\bindings\python\cntk\layers\blocks.py node references.
-    std::vector<std::vector<FunctionPtr>> pathesBitBftJoint;
-    {
-        std::vector<FunctionPtr> currentPeepholePath;
-        
-        // make a copy of traverse boundary 
-        std::unordered_set<FunctionPtr> peepHoleVisitedFunctions = visitedFunctions;
-
-        // traverse to find the joint of bit and bft
-        TraverseGraphWithPrePostActions(src->BlockRoot(),
-            peepHoleVisitedFunctions,
-            (std::function<void(const FunctionPtr&)>)[
-                &peepHoleVisitedFunctions, &pathesBitBftJoint, &currentPeepholePath](const FunctionPtr& function)
-        {
-            currentPeepholePath.push_back(function);
-            if (function->OpName() == L"Plus" && 
-                function->Inputs()[0].Owner() && function->Inputs()[0].Owner()->OpName() == L"ElementTimes" &&
-                function->Inputs()[1].Owner() && function->Inputs()[1].Owner()->OpName() == L"ElementTimes")
-            {
-                pathesBitBftJoint.push_back(currentPeepholePath);
-                peepHoleVisitedFunctions.erase(std::find_if(peepHoleVisitedFunctions.begin(), peepHoleVisitedFunctions.end(),
-                    [function](FunctionPtr f) {return function == f; }));
-            }
-        },
-            (std::function<void(const FunctionPtr&)>)[&currentPeepholePath](const FunctionPtr& function)
-        {
-            currentPeepholePath.pop_back();
-        });
-    }
-
-    FunctionPtr peepholeCoOp;
-    bool haspeephole = pathesBitBftJoint.size() == 3;
-    if (haspeephole)
-    {
-        // the last ElementTimes op is the peephole op
-        std::vector<FunctionPtr> &peepholePath = *std::max_element(pathesBitBftJoint.begin(), pathesBitBftJoint.end(),
-            [](std::vector<FunctionPtr> &p1, std::vector<FunctionPtr> &p2) {return p1.size() < p2.size(); });
-        std::vector<FunctionPtr>::reverse_iterator itPeepholeOp = std::find_if(peepholePath.rbegin(), peepholePath.rend(),
-            [](FunctionPtr function) {return function->OpName() == L"ElementTimes"; });
-        if (itPeepholeOp == peepholePath.rend())
-        {
-            CNTK::LogicError("Cannot find peephole op from a LSTM graph");
-        }
-
-        peepholeCoOp = *itPeepholeOp;
-        peepholeCo = GetPeepholeVariableFromOp(peepholeCoOp);
-
-        FunctionPtr stabilizer_h_op = GetStabilizerOp(peepholeCoOp);
-        if (stabilizer_h_op)
-        {
-            stabilizer_c = GetStabilizerCoef(stabilizer_h_op);
-        }
-    }
-
-    std::vector<std::vector<FunctionPtr>> pathesToPlusSlice;
-    std::vector<FunctionPtr> currentPath;
-
-    if (haspeephole)
-        // so that traverse will not be affected by the peephole path
-        visitedFunctions.insert(peepholeCoOp);
-
-    TraverseGraphWithPrePostActions(src->BlockRoot(),
-        visitedFunctions,
-        (std::function<void(const FunctionPtr&)>)[&pathesToPlusSlice, &currentPath](const FunctionPtr& function)
-    {
-        currentPath.push_back(function);
-        if (function->OpName() == L"Slice")
-        {
-            FunctionPtr functionSource = function->Inputs()[0].Owner();
-            if (functionSource->OpName() == L"Plus")
-            {
-                pathesToPlusSlice.push_back(currentPath);
-            }
-        }
-    },
-        (std::function<void(const FunctionPtr&)>)[&currentPath](const FunctionPtr& function)
-    {
-        currentPath.pop_back();
-    });
-
-    if (pathesToPlusSlice.size() != 4)
-    {
-        CNTK::LogicError("pathesToPlusSlice.size() != 4");
-    }
-
-    std::sort(pathesToPlusSlice.begin(), pathesToPlusSlice.end(),
-        [](const std::vector<FunctionPtr>& path1, const std::vector<FunctionPtr>& path2)
-    {
-        FunctionPtr slice1 = *path1.rbegin();
-        FunctionPtr slice2 = *path2.rbegin();
-        int beginIndex1 = slice1->Attributes()[PrimitiveFunction::AttributeNameBeginIndex].Value<int>();
-        int beginIndex2 = slice2->Attributes()[PrimitiveFunction::AttributeNameBeginIndex].Value<int>();
-        return beginIndex1 < beginIndex2;
-    });
-
-    std::vector<FunctionPtr> &ht_it_path = pathesToPlusSlice[0];
-    std::vector<FunctionPtr> &ht_bit_path = pathesToPlusSlice[1];
-    std::vector<FunctionPtr> &ht_ft_path = pathesToPlusSlice[2];
-    std::vector<FunctionPtr> &ht_ot_path = pathesToPlusSlice[3];
-
-    f_activation = FindActivation(ht_ot_path, 0);
-    g_activation = FindActivation(ht_bit_path, 1);
-    h_activation = FindActivation(ht_bit_path, 0);
-
-    // stabilizer_dh
-    FunctionPtr stackedProjPlusOp = ht_it_path[ht_it_path.size() - 1]->Inputs()[0].Owner();
-    FunctionPtr stabilizerDhOp = GetStabilizerOp(stackedProjPlusOp);
-    if (stabilizerDhOp)
-    {
-        stabilizer_dh = GetStabilizerCoef(stabilizerDhOp);
-    }
-
-    if (haspeephole)
-    {
-        {
-            // Ci merges to ht_it_path via element-wise time
-            FunctionPtr plusOp = ht_it_path[ht_it_path.size() - 2];
-            FunctionPtr peepholeOp = plusOp->Inputs()[0].Owner()->OpName() != L"Slice" ?
-                plusOp->Inputs()[0].Owner() : plusOp->Inputs()[1].Owner();
-            peepholeCi = GetPeepholeVariableFromOp(peepholeOp);
-
-        }
-        {
-            // Cf merges to ht_ft_path via element-wise time
-            FunctionPtr plusOp = ht_ft_path[ht_ft_path.size() - 2];
-            FunctionPtr peepholeOp = plusOp->Inputs()[0].Owner()->OpName() != L"Slice" ?
-                plusOp->Inputs()[0].Owner() : plusOp->Inputs()[1].Owner();
-            peepholeCf = GetPeepholeVariableFromOp(peepholeOp);
-
-            FunctionPtr stabilizerDcOp = GetStabilizerOp(peepholeOp);
-            if (stabilizerDcOp)
-                stabilizer_dc = GetStabilizerCoef(stabilizerDcOp);
-        }
-    }
+    return make_tuple(dimensions, broadCast, axis_start, swapInput);
 }
 
 // prepare an input node arg with correct name and meta data so that LotusIR can make the connection. 
@@ -1370,7 +1225,6 @@ void CNTKToONNXHelper::PrepareLSTMInput(const Variable &X, std::vector<ONNXIR::N
     std::string inputName = ToString(input.Uid());
     onnx::TypeProto inputArgType = ToTypeProto(input.Shape(), (int)(input.DynamicAxes().size()));
     
-    // if (ToString(input.Uid()).find("Input") != -1 && !input.IsConstant() && !input.IsOutput())
     if (input.IsInput() && input.HasSequenceAxis())
         (*inputArgType.mutable_tensor_type()->mutable_shape()->mutable_dim())[0].set_dim_param(FreeSequenceDimParam);
 
@@ -1417,43 +1271,6 @@ void CNTKToONNXHelper::PrepareLSTMInitialStateNode(ONNXIR::Graph* graph, std::un
 
     // TODO:
     variableNodes.emplace(initialVariables[0], variableNode);
-}
-
-void CNTKToONNXHelper::PrepareBiasNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
-    const std::vector<Variable> &Bs, std::vector<ONNXIR::NodeArg> &nodeInputs)
-{
-    // TODO: sanity check for all variables to have the same shape and data types.
-    // NDShape is in reversed order relative CNTK python so doReverseVec need to be true 
-    // when converting to ONNX tensor.
-    // However with LSTM, CNTK python weight tensor shape is already reversed relative to ONNX.
-    // We do not want to reverse again.
-    bool doReverseVec = false;
-
-    std::vector<int> shape = Cast<size_t, int>((NDShape({ Bs.size() }).AppendShape(Bs[0].Shape())).Dimensions());
-    shape[1] *= 2;
-    onnx::TypeProto inputArgType = ToTypeProto(shape, doReverseVec);
-    UpdateONNXType(Bs[0].GetDataType(), inputArgType);
-    ONNXIR::NodeArg inputArg(ToString(Bs[0].Uid()), &inputArgType);
-    std::vector<ONNXIR::NodeArg> varOutputs({ inputArg });
-    std::vector<ONNXIR::NodeArg> varInputs;
-    std::string inputName = inputArg.Name();
-    ONNXIR::Node* variableNode = graph->AddNode(inputName, "Constant", "", varInputs, varOutputs);
-
-    std::vector<NDArrayViewPtr> srcTensors;
-    for (int i = 0; i < Bs.size(); i++)
-    {
-        const Variable &variable = Bs[i];
-        srcTensors.push_back(variable.IsParameter() ? Parameter(variable).Value() : Constant(variable).Value());
-    }
-
-    onnx::TensorProto dstTensor;
-
-    CopyTensorsWithCNTKToONNXLSTMWeightLayoutConversion(srcTensors, nullptr, dstTensor, &inputArgType);
-    variableNode->AddAttribute("value", dstTensor);
-    nodeInputs.push_back(inputArg);
-
-    // TODO:
-    variableNodes.emplace(Bs[0], variableNode);
 }
 
 void CNTKToONNXHelper::PrepareLSTMPeepholeNode(ONNXIR::Graph* graph,
@@ -1510,6 +1327,45 @@ void CNTKToONNXHelper::PrepareLSTMPeepholeNode(ONNXIR::Graph* graph,
 
     // TODO:
     variableNodes.emplace(Ps[0], variableNode);
+}
+
+void CNTKToONNXHelper::PrepareLSTMBiasNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
+    const std::vector<Variable> &Bs, std::vector<ONNXIR::NodeArg> &nodeInputs)
+{
+    // TODO: sanity check for all variables to have the same shape and data types.
+    // NDShape is in reversed order relative CNTK python so doReverseVec need to be true 
+    // when converting to ONNX tensor.
+    // However with LSTM, CNTK python weight tensor shape is already reversed relative to ONNX.
+    // We do not want to reverse again.
+    bool doReverseVec = false;
+
+    std::vector<int> shape = Cast<size_t, int>((NDShape({ Bs.size() }).AppendShape(Bs[0].Shape())).Dimensions());
+
+    // ONNX LSTM spec has 2 bias, for forward and backward.
+    shape[1] *= 2;
+    onnx::TypeProto inputArgType = ToTypeProto(shape, doReverseVec);
+    UpdateONNXType(Bs[0].GetDataType(), inputArgType);
+    ONNXIR::NodeArg inputArg(ToString(Bs[0].Uid()), &inputArgType);
+    std::vector<ONNXIR::NodeArg> varOutputs({ inputArg });
+    std::vector<ONNXIR::NodeArg> varInputs;
+    std::string inputName = inputArg.Name();
+    ONNXIR::Node* variableNode = graph->AddNode(inputName, "Constant", "", varInputs, varOutputs);
+
+    std::vector<NDArrayViewPtr> srcTensors;
+    for (int i = 0; i < Bs.size(); i++)
+    {
+        const Variable &variable = Bs[i];
+        srcTensors.push_back(variable.IsParameter() ? Parameter(variable).Value() : Constant(variable).Value());
+    }
+
+    onnx::TensorProto dstTensor;
+
+    CopyTensorsWithCNTKToONNXLSTMWeightLayoutConversion(srcTensors, nullptr, dstTensor, &inputArgType);
+    variableNode->AddAttribute("value", dstTensor);
+    nodeInputs.push_back(inputArg);
+
+    // TODO:
+    variableNodes.emplace(Bs[0], variableNode);
 }
 
 void CNTKToONNXHelper::PrepareLSTMWeightNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
@@ -1581,7 +1437,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
     }
     
     // order forward, backward
-    std::map<LSTMDirection, int> directionCount({ { LSTMDirection::Forward, 0 } ,{ LSTMDirection::Backward, 0 } });
+    std::map<RNNDirection, int> directionCount({ { RNNDirection::Forward, 0 } ,{ RNNDirection::Backward, 0 } });
 
     // The following construct refers to ONNX spec:
     // https://github.com/onnx/onnx/blob/master/docs/Operators.md#lstm
@@ -1610,7 +1466,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
         // src has to be an LSTM node. 
         const FunctionPtr& lstm = *itLSTMBlock;
         string f_activation, g_activation, h_activation;
-        LSTMDirection direction;
+        RNNDirection direction;
         Variable initStateH, initStateC;
         Variable peepholeCi, peepholeCo, peepholeCf;
         double stabilizer_dh = 1, stabilizer_dc = 1, stabilizer_c = 1;
@@ -1657,7 +1513,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
     // ensure that if there is one direction, it is not backward.
     // if there two directions, they are forward and backward, and
     // that the inputs (Xs) are the same.
-    if (std::any_of(directionCount.begin(), directionCount.end(), [](std::map<LSTMDirection, int>::value_type &v) {return v.second > 1; }))
+    if (std::any_of(directionCount.begin(), directionCount.end(), [](std::map<RNNDirection, int>::value_type &v) {return v.second > 1; }))
     {
         LogicError("LSTM node is invalid because there should be no more than one path in each direction.");
     }
@@ -1666,8 +1522,8 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
         LogicError("Bi-directional LSTM node is invalid because the two LSTM nodes do not share one same input.");
     }
 
-    string direction = lstms.size() == 2 ? LSTMDirectionBidirection : 
-        (directionCount[LSTMDirection::Backward] == 1 ? LSTMDirectionReverse : LSTMDirectionForward);
+    string direction = lstms.size() == 2 ? RNNDirectionBidirection : 
+        (directionCount[RNNDirection::Backward] == 1 ? RNNDirectionReverse : RNNDirectionForward);
 
     // TODO: following commented out attributes are not supported. Use default.
     // float clip; // no clip yet
@@ -1689,7 +1545,7 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
         bool hasBias = std::all_of(Bs.begin(), Bs.end(), [](Variable &v) {return v.IsInitialized(); });
         if (hasBias)
         {
-            PrepareBiasNode(graph, variableNodes, Bs, nodeInputs);
+            PrepareLSTMBiasNode(graph, variableNodes, Bs, nodeInputs);
         }
         else
         {
@@ -1823,6 +1679,317 @@ ONNXIR::Node* CNTKToONNXHelper::CreateLSTMNode(const FunctionPtr &src,
     return squeezedLSTMNode;
 }
 
+void CNTKToONNXHelper::PrepareGRUBiasNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
+    const std::vector<Variable> &Bs, std::vector<ONNXIR::NodeArg> &nodeInputs)
+{
+    // TODO: sanity check for all variables to have the same shape and data types.
+    bool doReverseVec = false;
+    int numDirections = Bs.size();
+    int hiddenSize = Bs[0].Shape()[0] / 3;
+
+    std::vector<int> shape({ numDirections, 6 * hiddenSize });
+
+    // ONNX GRU spec has 2 bias, for forward and backward.
+    onnx::TypeProto inputArgType = ToTypeProto(shape, doReverseVec);
+    UpdateONNXType(Bs[0].GetDataType(), inputArgType);
+    ONNXIR::NodeArg inputArg(ToString(Bs[0].Uid()), &inputArgType);
+    std::vector<ONNXIR::NodeArg> varOutputs({ inputArg });
+    std::vector<ONNXIR::NodeArg> varInputs;
+    std::string inputName = inputArg.Name();
+    ONNXIR::Node* variableNode = graph->AddNode(inputName, "Constant", "", varInputs, varOutputs);
+
+    std::vector<NDArrayViewPtr> srcTensors;
+    for (int i = 0; i < Bs.size(); i++)
+    {
+        const Variable &variable = Bs[i];
+        srcTensors.push_back(variable.IsParameter() ? Parameter(variable).Value() : Constant(variable).Value());
+    }
+
+    onnx::TensorProto dstTensor;
+
+    CopyGRUBiasTensors(srcTensors, dstTensor, &inputArgType);
+    variableNode->AddAttribute("value", dstTensor);
+    nodeInputs.push_back(inputArg);
+
+    // TODO:
+    variableNodes.emplace(Bs[0], variableNode);
+}
+
+void CNTKToONNXHelper::PrepareGRUZRHWeightNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes, 
+    const std::vector<Variable> &Rzrs, const std::vector<Variable> &Rhs, std::vector<ONNXIR::NodeArg> &nodeInputs)
+{
+    int numDirections = Rzrs.size();
+    int hiddenSize = Rzrs[0].Shape().Dimensions()[1];
+    std::vector<int> shape({ numDirections, 3 * hiddenSize, hiddenSize });
+    onnx::TypeProto inputArgType = ToTypeProto(shape, false);
+    UpdateONNXType(Rzrs[0].GetDataType(), inputArgType);
+    ONNXIR::NodeArg inputArg(ToString(Rzrs[0].Uid()), &inputArgType);
+    std::vector<ONNXIR::NodeArg> varOutputs({ inputArg });
+    std::vector<ONNXIR::NodeArg> varInputs;
+    std::string inputName = inputArg.Name();
+    ONNXIR::Node* variableNode = graph->AddNode(inputName, "Constant", "", varInputs, varOutputs);
+
+    std::vector<NDArrayViewPtr> srcZRTensors, srcHTensors;
+    for (int i = 0; i < Rzrs.size(); i++)
+    {
+        const Variable &variable = Rzrs[i];
+        srcZRTensors.push_back(variable.IsParameter() ? Parameter(variable).Value() : Constant(variable).Value());
+
+        const Variable &variableH1 = Rhs[i];
+        srcHTensors.push_back(variableH1.IsParameter() ? Parameter(variableH1).Value() : Constant(variableH1).Value());
+    }
+
+    onnx::TensorProto dstTensor;
+
+    CopyGRUStateWeightTensors(srcZRTensors, srcHTensors, dstTensor, &inputArgType);
+    variableNode->AddAttribute("value", dstTensor);
+    nodeInputs.push_back(inputArg);
+
+    // TODO:
+    variableNodes.emplace(Rzrs[0], variableNode);
+}
+void CNTKToONNXHelper::PrepareGRUWeightNode(ONNXIR::Graph* graph, std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
+    const std::vector<Variable> &Ws, std::vector<ONNXIR::NodeArg> &nodeInputs)
+{
+    // TODO: sanity check for all variables to have the same shape and data types.
+    bool doReverseVec = false;
+
+    std::vector<int> shape = Cast<size_t, int>((NDShape({ Ws.size() }).AppendShape(Ws[0].Shape())).Dimensions());
+    onnx::TypeProto inputArgType = ToTypeProto(shape, doReverseVec);
+    UpdateONNXType(Ws[0].GetDataType(), inputArgType);
+    ONNXIR::NodeArg inputArg(ToString(Ws[0].Uid()), &inputArgType);
+    std::vector<ONNXIR::NodeArg> varOutputs({ inputArg });
+    std::vector<ONNXIR::NodeArg> varInputs;
+    std::string inputName = inputArg.Name();
+    ONNXIR::Node* variableNode = graph->AddNode(inputName, "Constant", "", varInputs, varOutputs);
+
+    std::vector<NDArrayViewPtr> srcTensors;
+    for (int i = 0; i < Ws.size(); i++)
+    {
+        const Variable &variable = Ws[i];
+        srcTensors.push_back(variable.IsParameter() ? Parameter(variable).Value() : Constant(variable).Value());
+    }
+
+    onnx::TensorProto dstTensor;
+
+    CopyGRUWeightTensors(srcTensors, dstTensor, &inputArgType);
+    variableNode->AddAttribute("value", dstTensor);
+    nodeInputs.push_back(inputArg);
+
+    // TODO:
+    variableNodes.emplace(Ws[0], variableNode);
+}
+
+ONNXIR::Node *CNTKToONNXHelper::CreateGRUNode(const FunctionPtr &src,
+    ONNXIR::Graph* graph,
+    std::unordered_map<FunctionPtr, ONNXIR::Node*>& functionNodes,
+    std::unordered_map<Variable, ONNXIR::Node*>& variableNodes,
+    const std::unordered_map<Variable, Variable>& compositeOutputsMap)
+{
+    // sanity check: 
+    std::vector<FunctionPtr> grus;
+    if (src->OpName() == L"GRU")
+    {
+        grus.push_back(src);
+    }
+    else if (src->OpName() == L"Splice") // src is a Splice op with inputs from two LSTM ops.
+    {
+        for (auto &input : src->Inputs())
+        {
+            grus.push_back(input.Owner());
+        }
+    }
+    else
+    {
+        LogicError("An GRU op should start with an GRU op (single direction) or a Splice op (bidirectional).");
+    }
+
+    // For single direction GRU,  lstms.size() == 1. For bidirectional GRU, grus.size() == 2. 
+    // It is an error otherwise.
+    if (grus.size() == 0 || grus.size() > 2 ||
+        std::any_of(grus.cbegin(), grus.cend(), [](const FunctionPtr &f) {return f->OpName() != L"GRU"; }))
+    {
+        LogicError("Invalid number of GRU ops to construct an ONNX GRU node.");
+    }
+
+    // order forward, backward
+    std::map<RNNDirection, int> directionCount({ { RNNDirection::Forward, 0 } ,{ RNNDirection::Backward, 0 } });
+
+    // The following construct refers to ONNX spec:
+    // https://github.com/onnx/onnx/blob/master/docs/Operators.md#lstm
+    // specifically, for attrubute and variable dimension. 
+    // We use the term from the spec as possible as we can to maintain a close correlation
+    // to the ONNX specification. 
+
+    int num_directions = grus.size();
+    // A list of 3 (or 6 if bidirectional) activation functions for input, output, forget, cell, and hidden.
+    std::vector<std::string> activations(num_directions * GRUActivationCount);
+
+    // TODO:
+    // In principle all these variables shall be treated as either constant or op output. 
+    // In reality except X, all other inputs to LSTM can be treated as constant.
+    std::vector<Variable> Xs(num_directions), Ws(num_directions), Rzrs(num_directions), 
+        Rhs(num_directions), Bs(num_directions),
+        initialHs(num_directions);
+    
+    std::vector<Variable> Yhs(grus.size());
+
+    for (std::vector<FunctionPtr>::const_iterator itGRUBlock = grus.cbegin(); itGRUBlock != grus.cend(); itGRUBlock++)
+    {
+        // src has to be an GRU node. 
+        const FunctionPtr& gru = *itGRUBlock;
+        std::vector<Variable> inputs = gru->Inputs();
+        if (inputs.size() != CNTKGRUInputCount)
+            LogicError("Unkown GRU configuration. The GRU node might be created with self stabilization. Such GRU ops cannot be converted to ONNX.");
+
+        string f_activation, g_activation;
+        RNNDirection direction;
+        Variable initStateH;
+        TraceGRUPathes(gru, f_activation, g_activation, direction, initStateH);
+
+        directionCount[direction]++;
+
+        int directionIndex = grus.size() == 1 ? 0 : (direction ? 1 : 0);
+
+        initialHs[directionIndex] = initStateH;
+
+
+        activations[directionIndex * GRUActivationCount + GRUActivationFIndex] = f_activation;
+        activations[directionIndex * GRUActivationCount + GRUActivationGIndex] = g_activation;
+
+        // input (always the last one), weight, hidden weight, and bias have fixed indices. 
+        // Thus we do not bother obtain them through traversing.
+        int inputIndex = inputs.size() - 1;
+        Xs[directionIndex] = inputs[inputIndex];
+
+        Ws[directionIndex] = inputs[CNTKGRUWeightIndex];
+        Rzrs[directionIndex] = inputs[CNTKGRUHiddenWeightZRIndex];
+        Rhs[directionIndex] = inputs[CNTKGRUHiddenWeightHIndex];
+        Bs[directionIndex] = inputs[CNTKGRUBiasIndex];
+
+        std::vector<Variable> outputs = gru->Outputs();
+
+        Yhs[directionIndex] = outputs[CNTKLSTMOutputYhIndex];
+    }
+
+    // ensure that if there is one direction, it is not backward.
+    // if there two directions, they are forward and backward, and
+    // that the inputs (Xs) are the same.
+    if (std::any_of(directionCount.begin(), directionCount.end(), [](std::map<RNNDirection, int>::value_type &v) {return v.second > 1; }))
+    {
+        LogicError("GRU node is invalid because there should be no more than one path in each direction.");
+    }
+    if (grus.size() == 2 && Xs[0] != Xs[1])
+    {
+        LogicError("Bi-directional GRU node is invalid because the two LSTM nodes do not share one same input.");
+    }
+
+    string direction = grus.size() == 2 ? RNNDirectionBidirection :
+        (directionCount[RNNDirection::Backward] == 1 ? RNNDirectionReverse : RNNDirectionForward);
+
+    // an RNN output size is the hidden size
+    int hidden_size = grus[0]->Outputs()[0].Shape()[0];
+
+    // inputs
+    std::vector<ONNXIR::NodeArg> nodeInputs;
+    PrepareLSTMInput(Xs[0], nodeInputs);
+    PrepareGRUWeightNode(graph, variableNodes, Ws, nodeInputs);
+    PrepareGRUZRHWeightNode(graph, variableNodes, Rzrs, Rhs, nodeInputs);
+
+    {
+        bool hasBias = std::all_of(Bs.begin(), Bs.end(), [](Variable &v) {return v.IsInitialized(); });
+        if (hasBias)
+        {
+            PrepareGRUBiasNode(graph, variableNodes, Bs, nodeInputs);
+        }
+        else
+        {
+            ONNXIR::NodeArg inputArg("", nullptr);
+            nodeInputs.push_back(inputArg);
+        }
+
+        {
+            // sequence_lens is not supported
+            ONNXIR::NodeArg inputArg("", nullptr);
+            nodeInputs.push_back(inputArg);
+        }
+
+        bool has_initial_h = std::all_of(initialHs.begin(), initialHs.end(), [](Variable &v) {return v.IsInitialized(); });
+        if (has_initial_h)
+        {
+            std::string hiddenUid = ToString(Yhs[0].Uid()) + "_initial_h";
+            PrepareLSTMInitialStateNode(graph, variableNodes, initialHs, FreeBatchSize, hidden_size, hiddenUid, nodeInputs);
+        }
+        else
+        {
+            {
+                ONNXIR::NodeArg inputArg("", nullptr);
+                nodeInputs.push_back(inputArg);
+            }
+        }
+    }
+
+    const int output_sequence = 1;        // LSTM in CNTK always output full sequence of output
+    std::vector<ONNXIR::NodeArg> nodeOutputs;
+    {
+        if (output_sequence == 1)
+        {
+            std::string nodeName;
+            if (grus.size() == 1)
+                nodeName = ToString(Yhs[0].Uid());
+            else
+                nodeName = ToString(src->Output().Uid());
+
+            auto outputArgType = ToTypeProto(std::vector<int>({ FreeSequenceLen, (int)Yhs.size(), FreeBatchSize, (int)Yhs[0].Shape()[0] }), false);
+            UpdateONNXType(Yhs[0].GetDataType(), outputArgType);
+            ONNXIR::NodeArg outputArg(nodeName, &outputArgType);
+            nodeOutputs.push_back(outputArg);
+        }
+        else
+        {
+            ONNXIR::NodeArg outputArg("", nullptr);
+            nodeOutputs.push_back(outputArg);
+        }
+
+        {
+            Variable Yh = Yhs[0];
+            std::string nodeName = ToString(Yh.Uid()) + "_h";
+            // TODO:
+            int batchSize = 1;
+            auto outputArgType = ToTypeProto(std::vector<int>({ (int)Yhs.size(), batchSize, (int)Yh.Shape()[0] }), false);
+            UpdateONNXType(Yh.GetDataType(), outputArgType);
+            ONNXIR::NodeArg outputArg(nodeName, &outputArgType);
+            nodeOutputs.push_back(outputArg);
+        }
+    }
+
+    // TODO: Except X, all other inputs to GRU are treated as constant.
+    // It is highly unlikely that any other input is an output of an op. 
+    // We will investigate once it is real.
+    if (Xs[0].Owner().get() != nullptr)
+        CreateNode(Xs[0].Owner(), graph, functionNodes, variableNodes, compositeOutputsMap);
+
+    auto nodeName = src->Name().empty() ? ToString(src->Uid()) : ToString(src->Name());
+    ONNXIR::Node *gruNode = graph->AddNode(nodeName, "GRU", "", nodeInputs, nodeOutputs);
+
+    gruNode->AddAttribute("activations", activations);
+    gruNode->AddAttribute("direction", direction);
+    gruNode->AddAttribute("hidden_size", (int64_t)hidden_size);
+    gruNode->AddAttribute("output_sequence", (int64_t)output_sequence);
+
+    // TODO: make bidirectional GRU work by figuring out output data 
+    // layout transpose in InsertReshapeNodeToCNTKFunction. 
+    if (grus.size() == 2)
+        NOT_IMPLEMENTED;
+
+    // TODO: uncomment this code once LotusRT output shape matches ONNX
+    // squeeze direction axis out. This is safe because it is not bi-directional node.
+    std::vector<int> shape({ FreeSequenceLen, 1, hidden_size });
+    ONNXIR::Node *squeezedLSTMNode = InsertReshapeNodeToCNTKFunction(src, gruNode, shape, graph);
+    functionNodes.emplace(src, squeezedLSTMNode);
+    return squeezedLSTMNode;
+}
+
 ONNXIR::Node *CNTKToONNXHelper::AddReshapeNode(const ONNXIR::NodeArg &nodeArg, const std::vector<int> &newShape, const std::string &outArgName, ONNXIR::Graph* graph)
 {
     ONNXIR::NodeArg outputArg(outArgName, nullptr);
@@ -1866,7 +2033,7 @@ ONNXIR::Node *CNTKToONNXHelper::InsertReshapeNodeToCNTKFunction(const FunctionPt
 {
     FunctionPtr blockRoot = src->BlockRoot();
     Variable output;
-    if (src->OpName() == L"LSTM")
+    if (Operators::IsRNNOp(ToString(src->OpName())))
         output = src->Outputs()[0];
     else
         // a bidirection LSTM case
@@ -1928,7 +2095,11 @@ ONNXIR::Node* CNTKToONNXHelper::CreateNode(const FunctionPtr& src,
     //        return CreateLSTMNode(src, graph, functionNodes, variableNodes, compositeOutputsMap);
     //}
     //else 
-    if (opName == "LSTM")
+    if (opName == "GRU")
+    {
+        return CreateGRUNode(src, graph, functionNodes, variableNodes, compositeOutputsMap);
+    }
+    else if (opName == "LSTM")
     {
         return CreateLSTMNode(src, graph, functionNodes, variableNodes, compositeOutputsMap);
     }
@@ -2912,13 +3083,13 @@ void CNTKToONNXHelper::FillTensorWithScalar(const std::vector<NDArrayViewPtr> &s
     onnx::TensorProto& dst, const std::vector<int> dstShape)
 {
     auto dataType = srcs[0]->GetDataType();
+    SetTensorType(dst, dataType);
     // the first dimension is for srcs count
     int eachSrcSize = std::accumulate(dstShape.begin() + 1, dstShape.end(), 1, std::multiplies<int>());
     switch (dataType)
     {
     case DataType::Float:
     {
-        dst.set_data_type(onnx::TensorProto_DataType_FLOAT);
         for (int i = 0; i < srcs.size(); i++)
         {
             auto srcTemp = srcs[i]->DeepClone();
@@ -2935,7 +3106,6 @@ void CNTKToONNXHelper::FillTensorWithScalar(const std::vector<NDArrayViewPtr> &s
     }
     case DataType::Double:
     {
-        dst.set_data_type(onnx::TensorProto_DataType_DOUBLE);
         for (int i = 0; i < srcs.size(); i++)
         {
             auto srcTemp = srcs[i]->DeepClone();

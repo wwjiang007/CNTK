@@ -7,6 +7,8 @@ import os
 import numpy as np
 import cntk as C
 import pytest
+from cntk.layers import * 
+from itertools import product
 
 #############
 #helpers
@@ -428,6 +430,43 @@ def test_Greater(tmpdir):
     model = C.greater([41., 42., 43.], [42., 42., 42.])
     verify_no_input(model, tmpdir, 'Greater_0')
 
+#GRU
+def MakeGRUNameFromConfig(backward, initial_state, activtion):
+    model_name = 'GRU.' + activtion.__name__
+    if (initial_state != 0):
+        model_name += '.initial'
+    if (backward):        
+        model_name += '.backward'
+    else:    
+        model_name += '.forward'
+    return model_name 
+
+direction_options = [False, True]
+activation_options = [C.tanh, C.relu]
+initial_state_options = [0, 0.1]
+
+input_dim = 2
+cell_dim = 3
+batch_size = 1
+sequence_len = 5
+
+def test_GRU(tmpdir):
+    for config in list(product(direction_options, initial_state_options, activation_options)):
+        model_filename = MakeGRUNameFromConfig(*config)
+        print(model_filename)
+        backward, initial_state, activation =  config
+    
+        x = C.input_variable(input_dim, dynamic_axes=[Axis.default_batch_axis(), C.Axis('sequenceAxis')]) 
+        GRUModel = Recurrence(GRU(cell_dim,    
+                                   activation = activation),  
+                               initial_state = initial_state,   
+                               go_backwards=backward)(x)
+        #CLG.plot(GRUModel, filename=cntk_pdf_filename)
+        #plot_block_internals(GRUModel, 'GRU', model_filename)
+        data = np.random.uniform(low=0.0, high=1.0, size=(batch_size, sequence_len, input_dim)).astype('f')
+        verify_one_input(GRUModel, data, tmpdir, model_filename)
+
+
 #Hardmax
 def test_Hardmax(tmpdir):
     data = np.asarray([1., 1., 2., 3.], dtype=np.float32)
@@ -519,9 +558,6 @@ def test_LRN(tmpdir):
     verify_one_input(model, img, tmpdir, 'LRN_1')
 
 #LSTM
-from cntk.layers import * 
-from itertools import product
-
 def CreateLSTMModel(activation, 
                     peepholes, 
                     self_stabilization, 
@@ -536,12 +572,12 @@ def CreateLSTMModel(activation,
                             ])
 
 # lstm attributes
-use_peepholes_options = [False]
-enable_self_stabilization_options = [False]
-activation_options = [C.tanh]
+use_peepholes_options = [False, True]
+enable_self_stabilization_options = [False, True]
+activation_options = [C.tanh, C.relu]
 
 #Recurrence attributes
-initial_state_options = [0]
+initial_state_options = [0, 0.1]
 
 input_dim = 2
 cell_dim = 3

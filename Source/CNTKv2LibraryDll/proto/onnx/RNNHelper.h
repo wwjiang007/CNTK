@@ -25,6 +25,8 @@ const std::string LSTMInputInitialHNameHint = "_initial_h_";
 const std::string LSTMInputInitialCNameHint = "_initial_c_";
 const std::string LSTMInputPeepholeNameHint = "_peephole_";
 
+const std::string GRUInputInitialHNameHint = "_initial_h_";
+
 enum
 {
     LSTMInputIndexX = 0,
@@ -55,7 +57,7 @@ enum {
 typedef enum {
     Forward,
     Backward,
-} LSTMDirection;
+} RNNDirection;
 
 enum
 {
@@ -69,9 +71,50 @@ enum
     CNTKLSTMOutputYhIndex = 0,
     CNTKLSTMOutputChIndex = 1
 };
-const string LSTMDirectionBidirection = "bidirectional";
-const string LSTMDirectionReverse = "reverse";
-const string LSTMDirectionForward = "forward";
+
+enum
+{
+    GRUActivationFIndex = 0,
+    GRUActivationGIndex = 1,
+    GRUActivationCount = 2
+};
+
+enum
+{
+    GRUInputIndexX = 0,
+    GRUInputIndexW = 1,
+    GRUInputIndexR = 2,
+    GRUInputIndexB = 3,
+    GRUInputIndexSequenceLens = 4,
+    GRUInitialH = 5,
+};
+
+enum
+{
+    CNTKGRUBiasIndex = 1,
+    CNTKGRUWeightIndex = 2,
+    CNTKGRUHiddenWeightZRIndex = 3,
+    CNTKGRUHiddenWeightHIndex = 4,
+    CNTKGRUInputCount = 7
+};
+
+
+const string RNNDirectionBidirection = "bidirectional";
+const string RNNDirectionReverse = "reverse";
+const string RNNDirectionForward = "forward";
 
 FunctionPtr CreateLSTM(const ONNXIR::Node *node, const std::vector<Variable> &inputs, const std::string &direction,
     const std::vector<std::string> &activations, const std::vector<float> &activation_alpha, const std::vector<float> &activation_beta);
+
+FunctionPtr CreateGRU(const ONNXIR::Node *node, const std::vector<Variable> &inputs, const std::string &direction,
+    const std::vector<string> &activations, const std::vector<float> &activation_alpha, const std::vector<float> &activation_beta);
+
+void TraceLSTMPathes(const FunctionPtr& src, string &f_activation, string &g_activation, string &h_activation,
+    RNNDirection &direction, Variable &initStateH, Variable &initStateC, Variable &peepholeCi, Variable &peepholeCo, Variable &peepholeCf,
+    double &stabilizer_dh, double &stabilizer_dc, double &stabilizer_c);
+
+void TraceGRUPathes(const FunctionPtr& src, string &f_activation, string &g_activation,
+    RNNDirection &direction, Variable &initStateH);
+
+std::string MapActivationNameONNXToCNTK(const std::string &onnxOp);
+std::string MapActivationNameCNTKToONNX(const std::string &cntkOp);
