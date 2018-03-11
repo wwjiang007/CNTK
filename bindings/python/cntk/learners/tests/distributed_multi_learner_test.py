@@ -8,20 +8,17 @@ import sys, os
 import argparse
 import re
 import platform
-
-from bmuf_metrics_aggregation_test import get_minibatch
-from distributed_learner_test import mpiexec_execute
 sys.path.append(os.path.dirname(__file__))
 cntk.cntk_py.set_fixed_random_seed(1)
+from distributed_learner_test import mpiexec_execute
+from bmuf_metrics_aggregation_test import get_minibatch
 
 feat_dim = 5
 label_dim = 3
 cell_dim = 5
 seq_len = 20
 num_batches = 101
-batch_size = 10
 progress_freq =10
-NUM_WORKERS = 4
 
 class SingleDataParallelTrainer():
     def __init__(self, frame_mode=False):
@@ -32,17 +29,17 @@ class SingleDataParallelTrainer():
         if frame_mode:
             self.feat = cntk.input_variable(shape=(feat_dim,))
             self.label = cntk.input_variable((label_dim,))
-            
+
             net = cntk.layers.Sequential([cntk.layers.Dense(cell_dim), cntk.layers.Dense(label_dim)])
             self.output = net(self.feat)
-        else:    
+        else:
             #sequence mode
             self.feat = cntk.sequence.input_variable(shape=(feat_dim,))
             self.label = cntk.sequence.input_variable((label_dim,))
-            
+
             net = cntk.layers.Sequential([cntk.layers.Recurrence(cntk.layers.LSTM(shape=label_dim, cell_shape=(cell_dim,)))])
             self.output = net(self.feat)
-        
+
         self.ce = cntk.cross_entropy_with_softmax(self.output, self.label)
         self.err = cntk.classification_error(self.output, self.label)
 
@@ -113,8 +110,10 @@ def mpi_worker_multi_learner(trainer, working_dir, checkpoint_dir, mb_source, gp
         # test with only one GPU
         cntk.try_set_default_device(cntk.gpu(0))
 
+    num_paritions = cntk.Communicator.num_workers();
+    partition_index = cntk.Communicator.rank();
     checkpoint_performed = False
-    for i, data in enumerate(get_minibatch(trainer, working_dir, mb_source)):
+    for i, data in enumerate(get_minibatch(trainer, working_dir, mb_source, num_paritions, partition_index)):
         trainer.trainer.train_minibatch(data)
         if i % 50 == 0:
             trainer.trainer.summarize_training_progress()
@@ -123,10 +122,10 @@ def mpi_worker_multi_learner(trainer, working_dir, checkpoint_dir, mb_source, gp
                 trainer.trainer.restore_from_checkpoint(checkpoint_dir)
                 checkpoint_performed = True
 
-def get_loss_perepoch_perworker(log_line):
+def get_loss_perepoch_perworker(log_line, num_workers):
     # [0]Finished Epoch[1]: [Training] loss = 1.663636 * 10, metric = 52.40% * 10 0.890s ( 11.2 samples/s);
     regex_pattern = r"\[(?P<worker_rank>\d)\].*? Epoch\[(?P<epoch>\d+)\].*? loss = (?P<loss>\d+\.\d+) \* (?P<samples>\d+).*? metric = (?P<metric>\d+\.\d+)"
-    loss_perepoch_perworker = {i:{} for i in range(NUM_WORKERS)}
+    loss_perepoch_perworker = {i:{} for i in range(num_workers)}
     for match in re.finditer(regex_pattern, log_line):
         rank = int(match.groupdict()["worker_rank"])
         epoch = int(match.groupdict()["epoch"])
@@ -136,7 +135,7 @@ def get_loss_perepoch_perworker(log_line):
         loss_perepoch_perworker[rank].update({epoch:(loss, metric, samples)})
     return loss_perepoch_perworker
 
-MB_SOURCES = ["numpy", "ctf_frame"]
+MB_SOURCES = ["ctf_frame"]
 @pytest.mark.parametrize("mb_source", MB_SOURCES)
 def test_single_data_parallel_learner_vs_two_data_parallel_learners(tmpdir, device_id, mb_source):
     if platform.system() == 'Linux':
@@ -150,8 +149,10 @@ def test_single_data_parallel_learner_vs_two_data_parallel_learners(tmpdir, devi
     launch_args += ["--mb_source", mb_source]
     launch_args += ["--trainer_type", "single"]
 
-    ret_str = mpiexec_execute(__file__, ['-n', str(NUM_WORKERS), '-l'], launch_args)
-    loss_perepoch_perworker = get_loss_perepoch_perworker(ret_str)
+    num_workers = 1 # use a single worker.
+    ret_str = mpiexec_execute(__file__, ['-n', str(num_workers), '-l'], launch_args)
+    print(ret_str)
+    loss_perepoch_perworker = get_loss_perepoch_perworker(ret_str, num_workers)
 
     loss_per_worker = loss_perepoch_perworker.values()
     single_learner_loss_per_worker_epochsort = []
@@ -166,9 +167,11 @@ def test_single_data_parallel_learner_vs_two_data_parallel_learners(tmpdir, devi
     launch_args += ["--mb_source", mb_source]
     launch_args += ["--trainer_type", "two"]
 
-    ret_str = mpiexec_execute(__file__, ['-n', str(NUM_WORKERS), '-l'], launch_args)
-    loss_perepoch_perworker = get_loss_perepoch_perworker(ret_str)
-    
+    num_workers = 2 # now run in distributed workers.
+    ret_str = mpiexec_execute(__file__, ['-n', str(num_workers), '-l'], launch_args)
+    print(ret_str)
+    loss_perepoch_perworker = get_loss_perepoch_perworker(ret_str, num_workers)
+
     loss_per_worker = loss_perepoch_perworker.values()
     multi_learner_loss_per_worker_epochsort = []
     for epoch_losses in loss_per_worker:
@@ -176,12 +179,13 @@ def test_single_data_parallel_learner_vs_two_data_parallel_learners(tmpdir, devi
 
     assert all([single_learner_loss_per_worker_epochsort[0] == i for i in multi_learner_loss_per_worker_epochsort])
 
-MB_SOURCES = ["ctf_utterance"]
+MB_SOURCES = ["ctf_frame"]
 @pytest.mark.parametrize("mb_source", MB_SOURCES)
 def test_multi_learner_bmuf_correct_metrics_averaging(tmpdir, device_id, mb_source):
     if platform.system() == 'Linux':
         pytest.skip('test only runs on Windows due to mpiexec -l option')
 
+    num_workers = 2
     # check whether trainer can be initialized or not
     bmuf = MultiLearnerTrainer()
     if not bmuf.trainer:
@@ -195,9 +199,9 @@ def test_multi_learner_bmuf_correct_metrics_averaging(tmpdir, device_id, mb_sour
     launch_args += ["--mb_source", mb_source]
     launch_args += ["--trainer_type", "multi"]
 
-    ret_str = mpiexec_execute(__file__, ['-n', str(NUM_WORKERS), '-l'], launch_args)
-
-    loss_perepoch_perworker = get_loss_perepoch_perworker(ret_str)
+    ret_str = mpiexec_execute(__file__, ['-n', str(num_workers), '-l'], launch_args)
+    print(ret_str)
+    loss_perepoch_perworker = get_loss_perepoch_perworker(ret_str, num_workers)
 
     num_epochs_per_worker = list(map(len,loss_perepoch_perworker.values()))
 
@@ -221,9 +225,10 @@ def test_multi_learner_bmuf_correct_metrics_averaging(tmpdir, device_id, mb_sour
     # Do the same test with checkpoint and compare the results.
     launch_args += ["--checkpointdir", str(tmpdir.join('checkpoint'))]
 
-    ret_str = mpiexec_execute(__file__, ['-n', str(NUM_WORKERS), '-l'], launch_args)
+    ret_str = mpiexec_execute(__file__, ['-n', str(num_workers), '-l'], launch_args)
+    print(ret_str)
 
-    loss_perepoch_perworker = get_loss_perepoch_perworker(ret_str)
+    loss_perepoch_perworker = get_loss_perepoch_perworker(ret_str, num_workers)
 
     num_epochs_per_worker = list(map(len,loss_perepoch_perworker.values()))
 
@@ -242,8 +247,11 @@ def test_multi_learner_bmuf_correct_metrics_averaging(tmpdir, device_id, mb_sour
     for epoch_losses in loss_per_worker:
         multi_learner_loss_per_worker_epochsort.append([epoch_losses[i] for i in sorted(epoch_losses)])
 
-    # Compare no checkpoint loss values to checkpoint loss values.
-    assert all([loss_per_worker_epochsort[0] == i for i in multi_learner_loss_per_worker_epochsort])
+    # Compare no checkpoint loss, matric, and num samples, to checkpoint loss values.
+    for i in multi_learner_loss_per_worker_epochsort:
+        for n in range(3):
+            for m in range(3):
+                assert np.allclose(float(loss_per_worker_epochsort[0][n][m]), float(i[n][m]))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -269,6 +277,7 @@ if __name__ == "__main__":
         mpi_worker_multi_learner(trainer, args["outputdir"], "", args["mb_source"], args["gpu"])
 
     elif args["trainer_type"] == "single":
+        print("Coming to a single learner")
         trainer = SingleDataParallelTrainer(frame_mode)
         mpi_worker_multi_learner(trainer, args["outputdir"], "", args["mb_source"], args["gpu"])
 
