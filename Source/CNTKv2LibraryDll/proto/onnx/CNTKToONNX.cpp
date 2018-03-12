@@ -135,9 +135,6 @@ namespace CNTK
             std::set<FunctionPtr>& visited,
             std::unordered_map<Variable, Variable>& compositeOutputsMap);
 
-        // Remove it after testing.
-        static void CNTKToONNXHelper::PrintNDArrayView(const NDArrayViewPtr src);
-
         //
         // Copy the content of NDArrayView to TensorProto, and do the needed
         // convergence.
@@ -274,7 +271,7 @@ namespace CNTK
         //
         // Extracts RNN bias matrices from OptimizedRNNStack's input combined weight matrix.
         //
-        static Matrix<float> CNTKToONNXHelper::GetBiasMatFromOrnnBigW(Matrix<float>& Wbig, size_t offset,
+        static Matrix<float> GetBiasMatFromOrnnBigW(Matrix<float>& Wbig, size_t offset,
             size_t hiddenSize, size_t numGates, wstring recurrentOp = L"lstm");
 
         //
@@ -364,37 +361,6 @@ void CNTKToONNXHelper::Copy(const FunctionPtr& src, ONNXIR::Graph* dst)
     // in ONNX graph.
     //
     CreateNode(src, dst, functionNodes, variableNodes, compositeOutputsMap);
-}
-
-void CNTKToONNXHelper::PrintNDArrayView(const NDArrayViewPtr src)
-{
-    auto dataType = src->GetDataType();
-    auto srcTemp = src->DeepClone();
-    auto srcShape = srcTemp->Shape();
-    auto totalSize = srcShape.TotalSize();
-
-    // This is our own copy so move it to the CPU.
-    srcTemp->ChangeDevice(DeviceDescriptor::CPUDevice());
-
-    switch (dataType)
-    {
-    case DataType::Float:
-    {
-        auto data = srcTemp->DataBuffer<float>();
-        for (size_t index = 0; index < totalSize; index++)
-            printf(" %0.4f ", data[index]);
-        break;
-    }
-    case DataType::Double:
-    {
-        auto data = srcTemp->DataBuffer<double>();
-        for (size_t index = 0; index < totalSize; index++)
-            printf(" %0.4f ", data[index]);
-        break;
-    }
-    default:
-        NOT_IMPLEMENTED;
-    }
 }
 
 // LSTM gate bias order difference between CNTK (icfo) and ONNX (iofc) is 
