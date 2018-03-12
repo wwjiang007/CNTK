@@ -159,10 +159,8 @@ def test_single_data_parallel_learner_vs_two_data_parallel_learners(tmpdir, devi
     for epoch_losses in loss_per_worker:
         single_learner_loss_per_worker_epochsort.append([epoch_losses[i] for i in sorted(epoch_losses)])
 
-    launch_args = []
-    if device_id >= 0:
-        launch_args += ['--gpu']
-
+    # We don't add the --gpu argument, 
+    # because it is already set during the previous mpi call.
     launch_args += ["--outputdir", str(tmpdir)]
     launch_args += ["--mb_source", mb_source]
     launch_args += ["--trainer_type", "two"]
