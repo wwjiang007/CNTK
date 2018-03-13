@@ -186,7 +186,9 @@ if __name__=='__main__':
     C.Communicator.finalize()
     end = timer()
     print("Training loss of the generator at worker: {%d} is: {%f}, time taken is: {%d} seconds."%(worker_rank, G_trainer_loss, (end - start)))
-    if worker_rank == 0:
-        noise = noise_sample(36)
-        images = G_output.eval({G_input: noise})
-        plot_images(images, subplot_shape =[6, 6])
+    
+    # Please uncomment below to display the generated images.
+    #if worker_rank == 0:
+    #    noise = noise_sample(36)
+    #    images = G_output.eval({G_input: noise})
+    #    plot_images(images, subplot_shape =[6, 6])
