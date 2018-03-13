@@ -133,9 +133,9 @@ GetActivations(const std::vector<std::string> &activations, const std::vector<fl
     // Here we assume that if they are set, they are set for all activations, regardless whether 
     // an activation needs those values or not.
     bool hasAlpha = activation_alpha.size() == (direction + 1) * LSTMActivationCount;
-    bool hasBeta = hasAlpha && activation_beta.size() == (direction + 1) * LSTMActivationCount;
+    bool hasAlphaBeta = hasAlpha && activation_beta.size() == (direction + 1) * LSTMActivationCount;
     std::function<FunctionPtr(const Variable&)> iofActivationOp, cellActivationOp, hiddenActivationOp;
-    if (hasBeta)
+    if (hasAlphaBeta)
     {
         iofActivationOp = ActivationMap(activations[iofActivationIndex], activation_alpha[iofActivationIndex], activation_beta[iofActivationIndex]);
         cellActivationOp = ActivationMap(activations[cellActivation], activation_alpha[cellActivation], activation_beta[cellActivation]);
@@ -169,9 +169,9 @@ GetGRUActivations(const std::vector<std::string> &activations, const std::vector
     int gActivationIndex = direction * GRUActivationCount + GRUActivationGIndex;
 
     bool hasAlpha = activation_alpha.size() == (direction + 1) * GRUActivationCount;
-    bool hasBeta = hasAlpha && activation_beta.size() == (direction + 1) * GRUActivationCount;
+    bool hasAlphaBeta = hasAlpha && activation_beta.size() == (direction + 1) * GRUActivationCount;
     std::function<FunctionPtr(const Variable&)> fActivationOp, gActivationOp;
-    if (hasBeta)
+    if (hasAlphaBeta)
     {
         fActivationOp = ActivationMap(activations[fActivationIndex], activation_alpha[fActivationIndex], activation_beta[fActivationIndex]);
         gActivationOp = ActivationMap(activations[gActivationIndex], activation_alpha[gActivationIndex], activation_beta[gActivationIndex]);
@@ -255,7 +255,7 @@ FunctionPtr GRUCell(Variable input,
 
     FunctionPtr projh2 = Times(R, prevOutput);
 
-    // CNTK weight and bias are in icfo order. 
+    // both CNTK and ONNX weight and bias are in zrh order. 
     std::vector<Axis> stack_axis({ Axis(-1) });
     FunctionPtr zt_proj = 
         Slice(projx3, stack_axis, { 0 * stacked_dim }, { 1 * stacked_dim }) +  
@@ -484,7 +484,7 @@ FunctionPtr CreateGRU(const ONNXIR::Node *node, const std::vector<Variable> &inp
         // here in CNTK, there is no direction axis because CNTK treats bidirectional LSTM 
         // as two separate LSTM. Therefore we can divide the dimension of the first axis 
         // by 4 to get the hidden size.
-        int hiddenDim = W.Shape()[0] / 3;
+        int hiddenDim = W.Shape()[0] / GRUWeightDimensionHiddenMultiplier;
 
         FunctionPtr outputH;
 
@@ -659,6 +659,18 @@ double GetStabilizerCoef(const FunctionPtr stabilizerDhOp)
     return (log(exp(alpha * steepness) + 1.0F) / steepness);
 }
 
+void GetDelayOps(const std::vector<Variable> &inputVars, 
+    std::vector<FunctionPtr> &pastValueOps, std::vector<FunctionPtr> &futureValueOps)
+{
+    for (std::vector<Variable>::const_iterator it = inputVars.cbegin(); it != inputVars.cend(); ++it)
+    {
+        if ((*it).Owner() != nullptr && (*it).Owner()->OpName() == L"PastValue")
+            pastValueOps.push_back((*it).Owner());
+        else if ((*it).Owner() != nullptr && (*it).Owner()->OpName() == L"FutureValue")
+            futureValueOps.push_back((*it).Owner());
+    }
+}
+
 // A CNTK LSTM op is created with stacked matmul followed by a slice op for 4 gates. 
 // Slice order tells which graph path is for which gate. This method is 
 // to traverse the graph to find the 4 paths along the 4 gates. It helps to 
@@ -680,14 +692,10 @@ void TraceLSTMPathes(const FunctionPtr& src,
     // src has to be an LSTM node. 
     std::vector<Variable> inputVars = src->Inputs();
     std::vector<FunctionPtr> pastValueOps, futureValueOps;
-    for (std::vector<Variable>::iterator it = inputVars.begin(); it != inputVars.end(); ++it)
-    {
-        if ((*it).Owner() != nullptr && (*it).Owner()->OpName() == L"PastValue")
-            pastValueOps.push_back((*it).Owner());
-        else if ((*it).Owner() != nullptr && (*it).Owner()->OpName() == L"FutureValue")
-            futureValueOps.push_back((*it).Owner());
-    }
+    GetDelayOps(inputVars, pastValueOps, futureValueOps);
 
+    // with CNTK LSTM, the first delay node is for H, the second one is for C
+    // indices here also coresponding with CNTK python layer code.
     if (pastValueOps.size() == 2 && futureValueOps.size() == 0)
     {
         direction = RNNDirection::Forward;
@@ -793,6 +801,7 @@ void TraceLSTMPathes(const FunctionPtr& src,
         currentPath.pop_back();
     });
 
+    // 4 gates of LSTM shall be traced. 
     if (pathesToPlusSlice.size() != 4)
     {
         CNTK::LogicError("pathesToPlusSlice.size() != 4");
@@ -808,6 +817,9 @@ void TraceLSTMPathes(const FunctionPtr& src,
         return beginIndex1 < beginIndex2;
     });
 
+    // This code is heavily coupled with CNTK python layer code:
+    // https://github.com/Microsoft/CNTK/blob/44c626a483edeaff97b4f7a46847b055a1d483aa/bindings/python/cntk/layers/blocks.py#L261
+    // pathesToPlusSlice is ordered by slice index so we are able to recover corresponding path here.
     std::vector<FunctionPtr> &ht_it_path = pathesToPlusSlice[0];
     std::vector<FunctionPtr> &ht_bit_path = pathesToPlusSlice[1];
     std::vector<FunctionPtr> &ht_ft_path = pathesToPlusSlice[2];
@@ -877,14 +889,9 @@ void TraceGRUPathes(const FunctionPtr& src, string &f_activation, string &g_acti
 {
     std::vector<Variable> inputVars = src->Inputs();
     std::vector<FunctionPtr> pastValueOps, futureValueOps;
-    for (std::vector<Variable>::iterator it = inputVars.begin(); it != inputVars.end(); ++it)
-    {
-        if ((*it).Owner() != nullptr && (*it).Owner()->OpName() == L"PastValue")
-            pastValueOps.push_back((*it).Owner());
-        else if ((*it).Owner() != nullptr && (*it).Owner()->OpName() == L"FutureValue")
-            futureValueOps.push_back((*it).Owner());
-    }
+    GetDelayOps(inputVars, pastValueOps, futureValueOps);
 
+    // indices here coresponding with CNTK python layer code.
     if (pastValueOps.size() == 1 && futureValueOps.size() == 0)
     {
         direction = RNNDirection::Forward;

@@ -7,7 +7,6 @@ import os
 import numpy as np
 import cntk as C
 import pytest
-from cntk.layers import * 
 from itertools import product
 
 #############
@@ -456,11 +455,11 @@ def test_GRU(tmpdir):
         print(model_filename)
         backward, initial_state, activation =  config
     
-        x = C.input_variable(input_dim, dynamic_axes=[Axis.default_batch_axis(), C.Axis('sequenceAxis')]) 
-        GRUModel = Recurrence(GRU(cell_dim,    
-                                   activation = activation),  
-                               initial_state = initial_state,   
-                               go_backwards=backward)(x)
+        x = C.input_variable(input_dim, dynamic_axes=[C.Axis.default_batch_axis(), C.Axis('sequenceAxis')]) 
+        GRUModel = C.layers.Recurrence(C.layers.GRU(cell_dim,     
+                                                    activation = activation),   
+                                       initial_state = initial_state,    
+                                       go_backwards=backward)(x)
         #CLG.plot(GRUModel, filename=cntk_pdf_filename)
         #plot_block_internals(GRUModel, 'GRU', model_filename)
         data = np.random.uniform(low=0.0, high=1.0, size=(batch_size, sequence_len, input_dim)).astype('f')
@@ -563,13 +562,13 @@ def CreateLSTMModel(activation,
                     self_stabilization, 
                     cell_dim, 
                     initial_state):  
-    return Sequential([ 
-        Recurrence(LSTM(cell_dim, 
-                        use_peepholes = peepholes, 
-                        activation = activation,    
-                        enable_self_stabilization = self_stabilization),    
-                   initial_state = initial_state)
-                            ])
+    return C.layers.Sequential([  
+        C.layers.Recurrence(C.layers.LSTM(cell_dim,  
+                                          use_peepholes = peepholes,  
+                                          activation = activation,     
+                                          enable_self_stabilization = self_stabilization),     
+                            initial_state = initial_state) 
+        ])
 
 # lstm attributes
 use_peepholes_options = [False, True]
@@ -600,7 +599,7 @@ def test_LSTM(tmpdir):
         model_filename = MakeLSTMNameFromConfig(*config)
         use_peepholes, enable_self_stabilization, initial_state, activation =  config
     
-        x = C.input_variable(input_dim, dynamic_axes=[Axis.default_batch_axis(), C.Axis('sequenceAxis')]) 
+        x = C.input_variable(input_dim, dynamic_axes=[C.Axis.default_batch_axis(), C.Axis('sequenceAxis')]) 
         LSTMmodel = CreateLSTMModel(peepholes = use_peepholes,   
                                     activation = activation,
                                     initial_state = initial_state,

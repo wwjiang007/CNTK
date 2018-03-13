@@ -824,7 +824,7 @@ std::vector<Variable> CreateRNNConstant(
                     int row = count / input_size;
                     int col = count % input_size;
                     int sourceIndex = dir * totalSizePerDirection + count;
-                    int targetIndex = col * cell_size * 3 + row;
+                    int targetIndex = col * cell_size * GRUWeightDimensionHiddenMultiplier + row;
                     data[targetIndex] = valueProto.float_data()[sourceIndex];
                 }
 
@@ -861,14 +861,14 @@ std::vector<Variable> CreateRNNConstant(
                     int col = count % input_size;
                     int block = row / cell_size;
                     int sourceIndex = dir * totalSizePerDirection + count;
-                    if (block < 2)
+                    if (block < CNTKGRUZRWeightMultiplier)
                     {
-                        int targetIndex = col * cell_size * 2 + row;
+                        int targetIndex = col * cell_size * CNTKGRUZRWeightMultiplier + row;
                         hData[targetIndex] = valueProto.float_data()[sourceIndex];
                     }
                     else
                     {
-                        int targetIndex = col * cell_size + row - cell_size * 2;
+                        int targetIndex = col * cell_size + row - cell_size * CNTKGRUZRWeightMultiplier;
                         h1Data[targetIndex] = valueProto.float_data()[sourceIndex];
                     }
                 }
@@ -885,18 +885,14 @@ std::vector<Variable> CreateRNNConstant(
         {
             // see ONNX spec for the tensor shape
             int num_directions = valueProto.dims(0);
-            int cell_size = valueProto.dims(1) / 6;
-            // there is an ONNX spec issue with bias input. It states that 
-            // "This tensor has shape `[num_directions, 8*hidden_size]", which means 
-            // hidden and input are applied with bias separately after weight. 
-            // In CNTK, bias is be applied in fused form, after hidden and input 
-            // are element-wise added. In this case
-            // the bias shape is [num_directions, 4*hidden_size]
-            NDShape weightShape({ (size_t)(3 * cell_size) });
+            int cell_size = valueProto.dims(1) / GRUBiasDimensionHiddenMultiplier;
+            // shape size is devided by 2 so that it only applies to input (CNTK)
+            // TODO: this incompatibility needs further investigation.
+            NDShape weightShape({ (size_t)(GRUBiasDimensionHiddenMultiplier / 2 * cell_size) });
             for (int dir = 0; dir < num_directions; dir++)
             {
                 std::string nodeName = name + std::string(1, (char)dir) + LSTMInputBiasNameHint;
-                int totalSizePerDirection = 3 * cell_size;
+                int totalSizePerDirection = GRUBiasDimensionHiddenMultiplier / 2 * cell_size;
                 float *data = new float[totalSizePerDirection];
                 for (size_t targetIndex = 0; targetIndex < totalSizePerDirection; targetIndex++)
                 {

@@ -27,6 +27,16 @@ const std::string LSTMInputPeepholeNameHint = "_peephole_";
 
 const std::string GRUInputInitialHNameHint = "_initial_h_";
 
+// https://github.com/onnx/onnx/blob/master/docs/Operators.md#attributes-18
+// https://github.com/onnx/onnx/blob/master/docs/Operators.md#attributes-27
+// https://github.com/onnx/onnx/blob/master/docs/Operators.md#attributes-39
+// CNTK RNN ops always output sequence. 
+// ONNX requires to set the output_sequence attribute to 1 to output sequence. 
+enum
+{
+    RNNOutputSequence = 1
+};
+
 enum
 {
     LSTMInputIndexX = 0,
@@ -52,6 +62,14 @@ enum {
     LSTMPeepholeCountCoIndex = 1,
     LSTMPeepholeCountCfIndex = 2,
     LSTMPeepholeCount = 3
+};
+
+// https://github.com/onnx/onnx/blob/master/docs/Operators.md#inputs-3---8
+// size of weight/bias matrix is a multiple of hidden size
+enum
+{
+    LSTMWeightDimensionHiddenMultiplier = 4,
+    LSTMBiasDimensionHiddenMultiplier = 8
 };
 
 typedef enum {
@@ -89,12 +107,26 @@ enum
     GRUInitialH = 5,
 };
 
+// https://github.com/onnx/onnx/blob/master/docs/Operators.md#inputs-3---6
+// size of weight/bias matrix is a multiple of hidden size
+enum
+{
+    GRUWeightDimensionHiddenMultiplier = 3,
+    GRUBiasDimensionHiddenMultiplier = 6
+};
+
+enum
+{
+    CNTKGRUZRWeightMultiplier = 2
+};
 enum
 {
     CNTKGRUBiasIndex = 1,
     CNTKGRUWeightIndex = 2,
     CNTKGRUHiddenWeightZRIndex = 3,
     CNTKGRUHiddenWeightHIndex = 4,
+    CNTKGRUPastOrFutureIndex = 5,
+    CNTKGRUInputIndex = 6,
     CNTKGRUInputCount = 7
 };
 
