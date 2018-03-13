@@ -62,6 +62,8 @@ def verify_one_input(model, data, tmpdir, name):
 
     if (type(o0) is list):
         o0 = o0[0]
+    if (type(o1) is list):
+        o1 = o1[0]
 
     assert np.allclose(o0, o1)
 
