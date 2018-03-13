@@ -30,5 +30,4 @@ def test_cifar_resnet_distributed(device_id):
 
     #Training loss of the generator at worker: {0} is: {2.201804}, time taken is: {40} seconds
     results = re.findall("Training loss of the generator at worker: \{.+?\} is: \{.+?\}", str_out)
-    loss = re.findall("\d+\.\d+",results[0])
-    assert(np.isclose(float(loss[0]), 2.2018))
+    assert(len(results) == 4)
