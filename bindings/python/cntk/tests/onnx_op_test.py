@@ -7,6 +7,7 @@ import os
 import numpy as np
 import cntk as C
 import pytest
+from cntk.ops.tests.ops_test_utils import cntk_device
 
 #############
 #helpers
@@ -684,9 +685,10 @@ OPTIM_RNN_STACK_CONFIGS = ((True, 1, 2, 3), (True, 2, 2, 3), (True, 2, 4, 8), (T
 def test_OptimizedRNNStack(bidirectional, num_layers, input_size, hidden_size, tmpdir, device_id):
     if device_id == -1:
         pytest.skip('Test only runs on GPU')
+    dev = cntk_device(device_id)    
     from _cntk_py import constant_initializer
     model_filename = 'optimized_rnn_stack_' + ('bi' if bidirectional else 'uni') + '_layers' + str(num_layers) + '_inp' + str(input_size) + '_hid' + str(hidden_size)
-    W = C.parameter((C.InferredDimension, input_size), constant_initializer(0.1))
+    W = C.parameter((C.InferredDimension, input_size), constant_initializer(0.1), device=dev)
     x = C.sequence.input_variable(shape=(input_size,))
     s = np.asarray(np.random.uniform(-1, 1, (5,input_size)), dtype=np.float32)
     f = C.optimized_rnnstack(x, W, hidden_size, num_layers, bidirectional=bidirectional, name='MyRnnStack')
