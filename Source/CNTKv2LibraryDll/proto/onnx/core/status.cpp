@@ -57,7 +57,7 @@ namespace ONNXIR
                 result += "[ONNXError]";
                 result += " : ";
                 result += std::to_string(static_cast<int>(Code()));
-                char *msg = NULL;
+                std::string msg;
                 switch (static_cast<StatusCode>(Code()))
                 {
                 case INVALID_ARGUMENT:
@@ -89,7 +89,7 @@ namespace ONNXIR
                     break;
                 }
                 result += " : ";
-                result += std::string(msg);
+                result += msg;
                 result += " : ";
                 result += m_state->m_msg;
             }
