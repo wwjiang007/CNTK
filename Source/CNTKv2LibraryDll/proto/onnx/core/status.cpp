@@ -1,7 +1,5 @@
 #include "status.h"
 
-#include <string>
-
 namespace ONNXIR
 {
     namespace Common
@@ -59,7 +57,7 @@ namespace ONNXIR
                 result += "[ONNXError]";
                 result += " : ";
                 result += std::to_string(static_cast<int>(Code()));
-                std::string msg;
+                char *msg = NULL;
                 switch (static_cast<StatusCode>(Code()))
                 {
                 case INVALID_ARGUMENT:
@@ -91,7 +89,7 @@ namespace ONNXIR
                     break;
                 }
                 result += " : ";
-                result += msg;
+                result += std::string(msg);
                 result += " : ";
                 result += m_state->m_msg;
             }
