@@ -2476,7 +2476,7 @@ std::vector<FunctionPtr> ONNXToCNTKHelper::FromONNXNode(const Node *node, ONNXTo
     {
         FunctionPtr cntkFunction = CreateCNTKNode(node, inputs, computeDevice);
             constructedNodeMap.insert(ONNXToCNTKMap::value_type(node, std::vector<FunctionPtr>({ cntkFunction })));
-            return std::vector<FunctionPtr>({ cntkFunction }); 
+            return std::vector<FunctionPtr>({ cntkFunction });
     }
 }
 

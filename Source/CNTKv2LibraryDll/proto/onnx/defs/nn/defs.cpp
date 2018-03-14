@@ -538,11 +538,11 @@ namespace ONNXIR {
             "Constrain input and output types to float tensors.")
         .Attr("image", "Image tensor stored as a sequence of floats [C,H,W].", AttrType::AttributeProto_AttributeType_TENSOR);
 
-	REGISTER_OPERATOR_SCHEMA(LegacyPadding)
+    REGISTER_OPERATOR_SCHEMA(LegacyPadding)
         .SetDomain(c_msDomain)
         .Description("his operator is designed to support CoreML's pooling operator under IncludeLastPixel padding mode.. "
             "To simulate CoreML's pooling operator, First, copy kernel shape, strides, padding "
-			"amounts from the original pooling operator to this LegacyPadding operator. "
+            "amounts from the original pooling operator to this LegacyPadding operator. "
             "Second, create a pooling operator under auto_pad=VALID with the kernel and strides used in the original pooling. "
             "Third, connect the output of LegacyPadding operator with the pooling operator we just create. ")
         .Input("data", "Input tensor.", "T")
@@ -558,7 +558,7 @@ namespace ONNXIR {
         .Attr("strides",
               "Stride along H- and W-axes, [stride_h, stride_w].",
               AttrType::AttributeProto_AttributeType_INTS, int64_t(1))
-	    .Attr("value",
+        .Attr("value",
               "One float, indicates the value to be filled, default is 0",
               AttrType::AttributeProto_AttributeType_FLOAT, float(0));
 }

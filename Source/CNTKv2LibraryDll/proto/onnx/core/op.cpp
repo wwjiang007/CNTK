@@ -244,7 +244,7 @@ namespace ONNXIR
         // determined to remove too old version history.
         m_map[c_onnxDomain] = std::make_pair(1, 2);
         m_map[c_mlDomain] = std::make_pair(1, 1);
-		m_map[c_msDomain] = std::make_pair(1, 1);
+        m_map[c_msDomain] = std::make_pair(1, 1);
     }
 
     const std::unordered_map<std::string, std::pair<int, int>>&
