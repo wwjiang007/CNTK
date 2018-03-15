@@ -125,6 +125,13 @@ namespace ONNXIR
         m_modelProto->set_model_version(p_modelVersion);
     }
 
+    void Model::SetOpsetImport(VERSION p_modelVersion, const std::string& p_domain)
+    {
+        auto opSetIdProto = m_modelProto.add_opset_import();
+        opSetIdProto->set_domain(p_domain);
+        opSetIdProto->set_version(p_modelVersion);
+    }
+
     const std::string& Model::DocString() const
     {
         return m_modelProto->doc_string();
