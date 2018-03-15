@@ -148,7 +148,10 @@ public:
             {
                 // Replace only a column of the output value corresponding to the
                 // input frame.
-                this->m_outputsValue[i]->SetColumn(*outputMatrixAndLayout.first, fr.timeIdxInSeq);
+                //size_t numCols = outputMatrixAndLayout.first->GetNumCols();
+                size_t numCols = fr.m_pMBLayout->GetNumParallelSequences();
+                size_t startCol = fr.timeIdxInSeq * numCols;   
+                this->m_outputsValue[i]->SetColumnSlice(*outputMatrixAndLayout.first, startCol, numCols);
             }
             else
             {
@@ -214,7 +217,9 @@ public:
             if (inSEQMode)
             {
                 layout->InitAsFrameMode(fr.m_pMBLayout->GetNumParallelSequences());
-                outputGradient = std::make_shared<Matrix<ElemType>>(this->m_outputsGradient[i]->ColumnSlice(fr.timeIdxInSeq, 1));
+                size_t numCols = fr.m_pMBLayout->GetNumParallelSequences();
+                size_t startCol = fr.timeIdxInSeq * numCols;
+                outputGradient = std::make_shared<Matrix<ElemType>>(this->m_outputsGradient[i]->ColumnSlice(startCol, numCols));
             }
             else
             {

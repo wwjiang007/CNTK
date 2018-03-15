@@ -768,11 +768,9 @@ class SimpleRecurrentNode(UserFunction):
     def deserialize(inputs, name, state):
         return SimpleRecurrentNode(inputs, name=name)
 
-
 def test_recurrance_with_udf_with_layers():
     x = C.sequence.input_variable(needs_gradient=True,shape=(3,2))
     x0 = np.reshape(np.arange(24.0,dtype=np.float32),(1,4,3,2))
-
     name = "NewLayer"
 
     @C.BlockFunction(name, name)
@@ -816,17 +814,18 @@ class SimpleUdf(UserFunction):
 
     @staticmethod
     def deserialize(inputs, name, state):
-        return DummyLayer(inputs, name=name)
+        return SimpleUdf(inputs, name=name)
 
 
 def test_recurrance_with_udf_without_layers():
     name = "SimpleUdf"
     def udf(a):
         return C.user_function(SimpleUdf(a, name=name))
-    
+
     # input varibale and the data.
     x = C.sequence.input_variable(needs_gradient=True,shape=(2,))
-    x0 = np.reshape(np.arange(8.0,dtype=np.float32),(1,4,2))
+    x0 = np.reshape(np.arange(16.0, dtype=np.float32),(2,4,2))
+    print(x0)
 
     # creates a recurrent loop.
     p = C.placeholder(shape=(2,))
@@ -836,12 +835,15 @@ def test_recurrance_with_udf_without_layers():
 
     #C.logging.graph.plot(z, "recurrent.pdf")
     out = z.eval({x:x0})
-    expected_out = [np.array([1,1,3,4,13,21,79,148], dtype=np.float32).reshape(4,2)]
+    print(out)
+    expected_out = [np.array([1,1,3,4,13,21,79,148], dtype=np.float32).reshape(4,2),np.array([1,1,11,12,133,157,1863,2356], dtype=np.float32).reshape(4,2)]
     assert np.array_equal(out, expected_out)
 
     gradient, result= z.grad({x: x0}, wrt=[x], outputs=[z.output])
+    print(result)
     assert np.array_equal(result, expected_out)
 
-    expected_grad = [np.array([0,0,29,41,21,32,13,21], dtype=np.float32).reshape(4,2)]
+    expected_grad = [np.array([0,0,29,41,21,32,13,21], dtype=np.float32).reshape(4,2),np.array([0,0,181,209,165,192,133,157], dtype=np.float32).reshape(4,2)]
+    print(gradient)
     assert np.array_equal(gradient, expected_grad)
     
