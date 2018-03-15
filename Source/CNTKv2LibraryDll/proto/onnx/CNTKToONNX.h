@@ -9,9 +9,8 @@
 #include "CNTKLibrary.h"
 
 #define CNTK_ONNX_MODEL_VERSION 1
-#define MACRO_TO_STRING(s) #s
 const std::string CNTK_ONNX_PRODUCER_NAME = "CNTK";
-const std::string CNTK_ONNX_PRODUCER_VERSION = MACRO_TO_STRING(CNTK_VERSION);
+const std::string CNTK_ONNX_PRODUCER_VERSION = CNTK_VERSION;
 
 namespace ONNXIR
 {
