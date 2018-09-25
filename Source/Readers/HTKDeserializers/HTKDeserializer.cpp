@@ -196,6 +196,10 @@ void HTKDeserializer::InitializeChunkInfos(ConfigHelper& config)
         // I.e. our chunks are a little larger than wanted (on av. half the av. utterance length).
         if (m_chunks.empty() || m_chunks.back().GetTotalFrames() > ChunkFrames)
         {
+            if (m_verbosity >= 2)
+            {
+                fprintf(stderr, "HTKDeserializer::InitializeChunkInfos: Splitting utterances into chunk[%u]...\n", chunkId);
+            }
             m_chunks.push_back(HTKChunkInfo(chunkId++));
         }
 
@@ -547,6 +551,10 @@ void HTKDeserializer::GetSequenceById(ChunkIdType chunkId, size_t id, vector<Seq
     const UtteranceDescription* utterance = chunkInfo.GetUtterance(utteranceIndex);
     auto utteranceFrames = chunkInfo.GetUtteranceFrames(utteranceIndex);
 
+    if (m_verbosity == 2) 
+    {
+        fprintf(stderr, "HTKDeserializer::GetSequenceById: Reading features for utterance [%u,%u]\n", utterance->GetPath().s, utterance->GetPath().e);
+    }
     // wrapper that allows m[j].size() and m[j][i] as required by augmentneighbors()
     MatrixAsVectorOfVectors utteranceFramesWrapper(utteranceFrames);
 

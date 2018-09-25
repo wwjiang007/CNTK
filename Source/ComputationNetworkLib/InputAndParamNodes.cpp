@@ -11,6 +11,9 @@
 
 #include <string>
 
+//
+// Note: Some template specializations have not been implemented in this file.
+//
 namespace Microsoft { namespace MSR { namespace CNTK {
 
 // -----------------------------------------------------------------------
@@ -146,7 +149,7 @@ LearnableParameter<ElemType>::LearnableParameter(const ScriptableObjects::IConfi
         if (initFromLiteral.empty())
             RuntimeError("initFromLiteral parameter must be provided when using \"fromLiteral\" initialization method");
         size_t numRows, numCols;
-        auto array = File::LoadMatrixFromStringLiteral<ElemType>(msra::strfun::utf8(initFromLiteral), numRows, numCols);
+        auto array = File::LoadMatrixFromStringLiteral<ElemType>(Microsoft::MSR::CNTK::ToLegacyString(Microsoft::MSR::CNTK::ToUTF8(initFromLiteral)), numRows, numCols);
         InitFromArray(array, numRows, numCols);
         m_initString.clear();
     }
@@ -346,6 +349,48 @@ void LearnableParameter<ElemType>::InitBilinear(Matrix<ElemType>& valueMatrix, c
     }
 
     valueMatrix.TransferToDeviceIfNotThere(deviceId, true);
+}
+
+// Initialize with bilinear interpolation coefficients (useful for deconvolution layer).
+template<>
+void LearnableParameter<char>::InitBilinear(Matrix<char>& valueMatrix, const TensorShape& sampleShape, size_t kernelWidth, size_t kernelHeight, DEVICEID_TYPE deviceId)
+{
+    RuntimeError("Unsupported template argument(char) in InitBilinear");
+}
+
+// Initialize with bilinear interpolation coefficients (useful for deconvolution layer).
+template<>
+void LearnableParameter<short>::InitBilinear(Matrix<short>& valueMatrix, const TensorShape& sampleShape, size_t kernelWidth, size_t kernelHeight, DEVICEID_TYPE deviceId)
+{
+    RuntimeError("Unsupported template argument(short) in InitBilinear");
+}
+
+template <>
+std::tuple<size_t, size_t, char> LearnableParameter<char>::InitRandom(Matrix<char>& valueMatrix,
+    const TensorShape& sampleShape,
+    const wstring& type,
+    const unsigned long randomSeed,
+    const char initValueScale,
+    const size_t initFilterRank,
+    const int initOutputRank,
+    const bool initOnCPUOnly,
+    DEVICEID_TYPE deviceId)
+{
+    RuntimeError("Unsupported template argument(char) in InitRandom");
+}
+
+template <>
+std::tuple<size_t, size_t, short> LearnableParameter<short>::InitRandom(Matrix<short>& valueMatrix,
+    const TensorShape& sampleShape,
+    const wstring& type,
+    const unsigned long randomSeed,
+    const short initValueScale,
+    const size_t initFilterRank,
+    const int initOutputRank,
+    const bool initOnCPUOnly,
+    DEVICEID_TYPE deviceId)
+{
+    RuntimeError("Unsupported template argument(short) in InitRandom");
 }
 
 // initialize by reading a matrix from a text file

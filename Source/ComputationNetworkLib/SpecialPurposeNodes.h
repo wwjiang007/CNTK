@@ -868,16 +868,22 @@ public:
         fstream >> this->m_seqGammarbMMIFactor;
         fstream >> this->m_seqGammarUsesMBR;
         fstream >> this->m_doReferenceAlignment;
-        LoadConfigsFromFile();
-        InitSEParams(m_symListPath, m_phonePath, m_stateListPath, m_transProbPath);
-        this->SetGammarCalculationParam(this->m_seqGammarAMF, this->m_seqGammarLMF, this->m_seqGammarWP, this->m_seqGammarbMMIFactor, this->m_seqGammarUsesMBR);
+        try
+        {
+            LoadConfigsFromFile();
+            InitSEParams(m_symListPath, m_phonePath, m_stateListPath, m_transProbPath);
+            this->SetGammarCalculationParam(this->m_seqGammarAMF, this->m_seqGammarLMF, this->m_seqGammarWP, this->m_seqGammarbMMIFactor, this->m_seqGammarUsesMBR);
+        }
+        catch (...)
+        {
+            fprintf(stderr, "WARNING: Failed to open one or more of the files.");
+        }
     }
 
     void LoadConfigsFromFile()
     {
         // Workaround for loading a trained model from a different location
-        std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> converter;
-        std::string latticeConfigPathStr = converter.to_bytes(m_latticeConfigPath);
+        std::string latticeConfigPathStr = Microsoft::MSR::CNTK::ToLegacyString(Microsoft::MSR::CNTK::ToUTF8(m_latticeConfigPath));
         wifstream file(latticeConfigPathStr.c_str());
         if (file.good())
         {
@@ -1280,6 +1286,17 @@ public:
     virtual void /*ComputationNode::*/ BackpropTo(const size_t inputIndex, const FrameRange& fr) override
     {
         // Do nothing to short circuit the gradient backward propagation
+        // Update: Short circuit from Backprop now, so we shouldn't reach here.
+        RuntimeError("Unexpected method called in StopGradientNode: BackpropTo. ");
+    }
+
+    void Backprop(const FrameRange& fr, bool childrenInThisLoop, bool childrenInOuterLoop) override
+    {
+        // Do nothing to short circuit the gradient backward propagation
+        // In Base(ComputationNode), Backprop validates m_needsgradient == true if any child needs gradient, and calls BackpropTo. We can short circuit this process altogether. 
+        // In current implementation we set m_needsgradient = false for StopGradientNode, so that we can pass validate check from nodes that don't 
+        // support input with gradient (e.g. ToSequenceNode does not support gradient propgation to its Input(1) denoting sequence lengths), 
+        // as well as short circuit some unnecessary gradient backprop. 
     }
 
     virtual bool OutputUsedInComputingInputNodesGradients() const override { return false; }
@@ -1424,5 +1441,42 @@ private:
 
 template class OutputMultiplexerNode<float>;
 template class OutputMultiplexerNode<double>;
+
+// -----------------------------------------------------------------------
+// CustomProxyOpNode is a placeholder node for a quantized operations.
+// It enables saving a model with its parameters so that they can be loaded
+// from the optimized implementation (Halide) for execution.
+// -----------------------------------------------------------------------
+
+template <class ElemType>
+class CustomProxyOpNode : public ComputationNode<ElemType> /* Not deriving from NumInputs, public NumInputs<4>*/
+{
+    typedef ComputationNode<ElemType> Base; UsingComputationNodeMembersBoilerplate;
+    static const std::wstring TypeName() { return L"CustomProxyOpNode"; }
+
+public:
+    CustomProxyOpNode(DEVICEID_TYPE deviceId, const wstring& name)
+        : Base(deviceId, name)
+    {
+    }
+
+    CustomProxyOpNode(const ScriptableObjects::IConfigRecordPtr configp)
+        : CustomProxyOpNode(configp->Get(L"deviceId"), L"<placeholder>")
+    {
+        AttachInputsFromConfig(configp);
+    }
+
+    virtual void /*ComputationNode::*/ ForwardProp(const FrameRange& fr) override
+    {
+        NOT_IMPLEMENTED
+    }
+
+    virtual void /*ComputationNode::*/ BackpropTo(const size_t inputIndex, const FrameRange& fr) override
+    {
+        NOT_IMPLEMENTED
+    }
+};
+
+template class CustomProxyOpNode<float>;
 
 } } }

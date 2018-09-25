@@ -385,6 +385,16 @@ __global__ void _elementWiseNegativeSineOnCuda(
 };
 
 template <class ElemType>
+__global__ void _elementWiseTanOnCuda(
+    const ElemType* a,
+    ElemType* res,
+    const CUDA_LONG N)
+{
+    CALCULATE_ELEMENTWISE_INDEX_OR_EXIT(id, N);
+    res[id] = tan_(a[id]);
+};
+
+template <class ElemType>
 __global__ void _elementWiseAcosOnCuda(
     const ElemType* a,
     ElemType* res,
@@ -402,6 +412,16 @@ __global__ void _elementWiseAsinOnCuda(
 {
     CALCULATE_ELEMENTWISE_INDEX_OR_EXIT(id, N);
     res[id] = asin_(a[id]);
+};
+
+template <class ElemType>
+__global__ void _elementWiseAtanOnCuda(
+    const ElemType* a,
+    ElemType* res,
+    const CUDA_LONG N)
+{
+    CALCULATE_ELEMENTWISE_INDEX_OR_EXIT(id, N);
+    res[id] = atan_(a[id]);
 };
 
 template <class ElemType>
@@ -1425,12 +1445,13 @@ template <class ElemType>
 __global__ void _setDiagonalValueFromVector(
     ElemType* a,
     const ElemType* b,
-    const CUDA_LONG N)
+    const CUDA_LONG N,
+    const CUDA_LONG ld)
 {
     int id = blockDim.x * blockIdx.x + threadIdx.x;
     if (id >= N)
         return;
-    a[IDX2C(id, id, N)] = b[id];
+    a[IDX2C(id, id, ld)] = b[id];
 }
 
 template <class ElemType>
@@ -3465,7 +3486,7 @@ __global__ void _denseMulSparseCSCTransposeToSparseBlockCol2(
         CUDA_LONG resultCol = col2blockIds[rhsRow]; // resultCol == rhsRow maps to columnid
 
         // assume resultValues are 0-initialized
-        atomicAdd(&resultValues[IDX2C(lhsRow, resultCol, numRowsLhs)], lhsValue * rhsVal);
+        atomicAdd(&resultValues[IDX2C(lhsRow, resultCol, numRowsLhs)], lhsValue * rhsVal); //TODO: this does not work with fp16 for sparse embedding
     }
 }
 
@@ -5801,6 +5822,8 @@ template<class ElemType>
 __global__ void _scatterToIndices(ElemType *indices,
                                   ElemType *value,
                                   ElemType *buffer,
+                                  char *mask,
+                                  size_t num_indices_elems_per_mask_col,
                                   size_t num_row_elements,
                                   size_t num_indices,
                                   CUDA_LONG num_elements)
@@ -5810,6 +5833,9 @@ __global__ void _scatterToIndices(ElemType *indices,
     {
         size_t indices_index = index / num_row_elements;
         size_t offset = index % num_row_elements;
+        //Skip missing values
+        assert(!mask || num_indices_elems_per_mask_col != 0);
+        if (mask && mask[indices_index / num_indices_elems_per_mask_col] == 0) return;
         //We resort to nondeterministic behavior (floating point addition is not associative).
         //Note that the CPU parallel algorithm will have poor performance on the GPU because of thread divergence
         atomicAdd(&buffer[(size_t)(unsigned long long int)indices[indices_index] * num_row_elements + offset], value[index]);
@@ -5851,6 +5877,48 @@ __global__ void _assignOneHotAsSparse(ElemType *indices,
 
         if (index == 0)
             secondaryIndices[0] = 0;
+    }
+}
+
+template<class ElemType>
+__global__ void _setSparseDiagonalValue(ElemType v,
+    GPUSPARSE_INDEX_TYPE *secondaryIndices,
+    GPUSPARSE_INDEX_TYPE *majorIndices,
+    ElemType *targetBuffer,
+    size_t diagSize,
+    size_t num_elements)
+{
+    const CUDA_LONG index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < diagSize)
+    {
+        majorIndices[index] = index;
+        targetBuffer[index] = v;
+        secondaryIndices[index] = index;
+    }
+    else if (index < num_elements)
+    {
+        secondaryIndices[index] = diagSize;
+    }
+}
+
+template<class ElemType>
+__global__ void _setSparseDiagonalValue(ElemType *vector,
+    GPUSPARSE_INDEX_TYPE *secondaryIndices,
+    GPUSPARSE_INDEX_TYPE *majorIndices,
+    ElemType *targetBuffer,
+    size_t diagSize,
+    size_t num_elements)
+{
+    const CUDA_LONG index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < diagSize)
+    {
+        majorIndices[index] = index;
+        targetBuffer[index] = vector[index];
+        secondaryIndices[index] = index;
+    }
+    else if (index < num_elements)
+    {
+        secondaryIndices[index] = diagSize;
     }
 }
 

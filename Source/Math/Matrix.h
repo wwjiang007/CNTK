@@ -177,6 +177,7 @@ public:
     void SwitchToMatrixType(MatrixType newMatrixType, MatrixFormat newMatrixFormat, bool keepValues); // sets matrix type between dense and sparse
     size_t GetNumRows() const;
     size_t GetNumCols() const;
+    size_t GetDiagSize() const;
     size_t GetNumElements() const;
     bool HasNoElements() const { return GetNumElements() == 0; }
     bool IsEmpty() const;
@@ -319,13 +320,13 @@ public:
 
     Matrix<ElemType>& AssignOneHot(const Matrix<ElemType>& a, vector<size_t>& shape, size_t axis, bool is_sparse);
     Matrix<ElemType>& GatherFromTarget(const Matrix<ElemType>& indices, const Matrix<ElemType>& target, size_t row_elements);
-    Matrix<ElemType>& ScatterToIndices(const Matrix<ElemType>& values, const Matrix<ElemType>& indices, size_t row_elements);
+    Matrix<ElemType>& ScatterToIndices(const Matrix<ElemType>& values, const Matrix<ElemType>& indices, size_t row_elements, const Matrix<char>* mask = nullptr);
 
     Matrix<ElemType> Transpose(); // This method doesn't change state of Matrix. It should be a const function
     Matrix<ElemType>& AssignTransposeOf(const Matrix<ElemType>& a);
 
     Matrix<ElemType>& DoGatherColumnsOf (ElemType beta, const Matrix<ElemType>& idx, const Matrix<ElemType>& a, ElemType alpha);
-    Matrix<ElemType>& DoScatterColumnsOf(ElemType beta, const Matrix<ElemType>& idx, const Matrix<ElemType>& a, ElemType alpha);
+    Matrix<ElemType>& DoScatterColumnsOf(ElemType beta, const Matrix<ElemType>& idx, const Matrix<ElemType>& a, ElemType alpha, bool idxHaveDups);
 
     Matrix<ElemType>& operator+=(const ElemType alpha);
     Matrix<ElemType>  operator+(const ElemType alpha) const;
@@ -422,11 +423,17 @@ public:
     Matrix<ElemType>& InplaceNegativeSine();
     Matrix<ElemType>& AssignNegativeSineOf(const Matrix<ElemType>& a);
 
+    Matrix<ElemType>& InplaceTan();
+    Matrix<ElemType>& AssignTanOf(const Matrix<ElemType>& a);
+
     Matrix<ElemType>& InplaceAcos();
     Matrix<ElemType>& AssignAcosOf(const Matrix<ElemType>& a);
 
     Matrix<ElemType>& InplaceAsin();
     Matrix<ElemType>& AssignAsinOf(const Matrix<ElemType>& a);
+
+    Matrix<ElemType>& InplaceAtan();
+    Matrix<ElemType>& AssignAtanOf(const Matrix<ElemType>& a);
 
     Matrix<ElemType>& InplaceCosh();
     Matrix<ElemType>& AssignCoshOf(const Matrix<ElemType>& a);
