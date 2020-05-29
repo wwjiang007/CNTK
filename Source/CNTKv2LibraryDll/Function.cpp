@@ -482,12 +482,14 @@ namespace CNTK
         vectorBuf.assign(s.begin(), s.end());
     }
 
-    void Function::Save(const std::wstring& filepath, ModelFormat format)
+    void Function::Save(const std::wstring& filepath, ModelFormat format, bool useExternalFilesToStoreParameters)
     {
         switch (format)
         {
         case ModelFormat::CNTKv2:
         {
+            if (useExternalFilesToStoreParameters)
+                fprintf(stderr, "Warning: useExternalFilesToStoreParameters only applies to ONNX format."); 
             Dictionary model = Serialize();
             auto stream = GetFstream(filepath, false);
             *stream << model;
@@ -497,7 +499,7 @@ namespace CNTK
 
         case ModelFormat::ONNX:
         {
-            ONNXFormat::Save(RootFunction(), filepath);
+            ONNXFormat::Save(RootFunction(), filepath, useExternalFilesToStoreParameters);
             break;
         }
         }
@@ -531,7 +533,7 @@ namespace CNTK
         return nullptr;
     }
 
-    /*static*/ FunctionPtr Function::Load(const char *buffer, size_t length, const DeviceDescriptor& computeDevice)
+    /*static*/ FunctionPtr Function::Load(const char *buffer, size_t length, const DeviceDescriptor& computeDevice, ModelFormat format)
     {
         if ((buffer == nullptr) || (length <= 0))
             InvalidArgument("The model buffer should not be null and its length should be greater than 0");
@@ -545,15 +547,32 @@ namespace CNTK
             }
         };
 
-        if (Internal::IsLegacyModel(buffer, length))
-            InvalidArgument("Loading a legacy model from byte array is not supported.");
-        else
+        switch (format)
         {
-            modelStreamBuffer buf(buffer, length);
-            std::istream modelStream(&buf);
+        case ModelFormat::CNTKv2:
+        {
+            if (Internal::IsLegacyModel(buffer, length)) {
+                InvalidArgument("Loading a legacy model from byte array is not supported.");
+            }
+            else
+            {
+                modelStreamBuffer buf(buffer, length);
+                std::istream modelStream(&buf);
 
-            return Load(modelStream, computeDevice);
+                return Load(modelStream, computeDevice);
+            }
+            break;
         }
+
+        case ModelFormat::ONNX:
+            return ONNXFormat::Load(static_cast<const void*>(buffer), length, computeDevice);
+            break;
+
+        default:
+            InvalidArgument("unsupported ModelFormat.");
+        }
+
+        return nullptr;
     }
 
     /*static*/ FunctionPtr Function::Load(std::istream& inputStream, const DeviceDescriptor& computeDevice)
@@ -1714,20 +1733,22 @@ namespace CNTK
         return AsBlock(std::move(result), { { operandPlaceholder, operand }}, L"ExpandDims", name);
     }
 
-    FunctionPtr ZerosLike(const Variable& operand, const std::wstring& name)
+    FunctionPtr ConstantLike(const Variable& operand, const double value, const std::wstring& name)
     {
         auto additionalProperties = Dictionary();
-        additionalProperties[PrimitiveFunctionAttribute::AttributeNameFillValue] = 0.0;
+        additionalProperties[PrimitiveFunctionAttribute::AttributeNameFillValue] = value;
 
         return UnaryOp(PrimitiveOpType::ConstantOp, operand, std::move(additionalProperties), name);
     }
 
+    FunctionPtr ZerosLike(const Variable& operand, const std::wstring& name)
+    {
+        return ConstantLike(operand, 0.0, name);
+    }
+
     FunctionPtr OnesLike(const Variable& operand, const std::wstring& name)
     {
-        auto additionalProperties = Dictionary();
-        additionalProperties[PrimitiveFunctionAttribute::AttributeNameFillValue] = 1.0;
-
-        return UnaryOp(PrimitiveOpType::ConstantOp, operand, std::move(additionalProperties), name);
+        return ConstantLike(operand, 1.0, name);
     }
 
     FunctionPtr CustomProxyOp(const std::vector<Variable>& operands, const std::wstring& customOp, const NDShape& outputShape, DataType outputType, const std::wstring& name)

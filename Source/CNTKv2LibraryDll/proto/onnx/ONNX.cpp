@@ -23,28 +23,28 @@ namespace CNTK
 {
     std::once_flag ONNXFormat::op_schema_initializer_flag_;
     static std::string defaultLoggerId{"Default"};
-    static onnxruntime::Logging::LoggingManager default_logging_manager_{ 
-        std::unique_ptr<onnxruntime::Logging::ISink>{new CNTKClogSink{}},
+    static onnxruntime::logging::LoggingManager default_logging_manager_{ 
+        std::unique_ptr<onnxruntime::logging::ISink>{new CNTKClogSink{}},
         [](){
-            onnxruntime::Logging::Severity severity;
+            onnxruntime::logging::Severity severity;
             switch (GetTraceLevel())
             {
             case TraceLevel::Error:
-                severity = onnxruntime::Logging::Severity::kERROR;
+                severity = onnxruntime::logging::Severity::kERROR;
                 break;
             case TraceLevel::Warning:
-                severity = onnxruntime::Logging::Severity::kWARNING;
+                severity = onnxruntime::logging::Severity::kWARNING;
                 break;
             case TraceLevel::Info:
-                severity = onnxruntime::Logging::Severity::kINFO;
+                severity = onnxruntime::logging::Severity::kINFO;
                 break;
             default:
-                severity = onnxruntime::Logging::Severity::kFATAL;
+                severity = onnxruntime::logging::Severity::kFATAL;
             }
             return severity;
         }(),
         false,
-        onnxruntime::Logging::LoggingManager::InstanceType::Default,
+        onnxruntime::logging::LoggingManager::InstanceType::Default,
         &defaultLoggerId };
 
     static void PrintGraph(FunctionPtr function, int spaces, bool useName = false)
@@ -92,11 +92,11 @@ void ONNXFormat::InitializeLotusIR()
     });
 }
 
-void ONNXFormat::Save(const FunctionPtr& src, const std::wstring& filepath)
+void ONNXFormat::Save(const FunctionPtr& src, const std::wstring& filepath, bool useExternalFilesToStoreParameters)
 {
     InitializeLotusIR();
 
-    auto model = CNTKToONNX::CreateModel(src);
+    auto model = CNTKToONNX::CreateModel(src, filepath, useExternalFilesToStoreParameters);
 #ifdef _WIN32
     onnxruntime::Model::Save(*model, filepath);
 #else
@@ -115,6 +115,26 @@ FunctionPtr ONNXFormat::Load(const std::wstring& filepath, const DeviceDescripto
 #else
     onnxruntime::common::Status loadStatus = onnxruntime::Model::Load(ToLegacyString(ToUTF8(filepath)), model);
 #endif
+    if (!loadStatus.IsOK())
+        LogicError("Failed to load model: '%s'", loadStatus.ErrorMessage().c_str());
+
+    FunctionPtr cntkFunction = ONNXToCNTK::CreateGraph(&model->MainGraph(), computeDevice, ToLegacyString(ToUTF8(filepath)));
+    return cntkFunction;
+}
+
+FunctionPtr ONNXFormat::Load(const void* model_data, int model_data_len, const DeviceDescriptor& computeDevice)
+{
+    InitializeLotusIR();
+
+    onnx::ModelProto model_proto;
+    const bool result = model_proto.ParseFromArray(model_data, model_data_len);
+    if (!result) {
+        LogicError("protobuf failed to parse model");
+    }
+
+    std::shared_ptr<onnxruntime::Model> model;
+    onnxruntime::common::Status loadStatus = onnxruntime::Model::Load(model_proto, model);
+
     if (!loadStatus.IsOK())
         LogicError("Failed to load model: '%s'", loadStatus.ErrorMessage().c_str());
 

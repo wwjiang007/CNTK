@@ -3,7 +3,7 @@
 // Licensed under the MIT license. See LICENSE.md file in the project root for full license information.
 //
 
-#include "proto/onnx/core/graph/model.h"
+#include "proto/onnx/onnxruntime/onnxruntime/core/graph/model.h"
 
 #include "RNNHelper.h"
 #include "Operators.h"
@@ -504,7 +504,7 @@ FunctionPtr UnwrapRNNOps(FunctionPtr rnnFunction, int numDirections)
     int hidden = newShape[0] / numDirections;
     newShape = newShape.AppendShape({ NDShape::FreeDimension });
     newShape[2] = numDirections;
-    newShape[1] = FreeBatchSize;
+    newShape[1] = BatchSizeProcessor::FreeBatchSize();
     newShape[0] = hidden;
     // because FreeBatchSize = 1, we can skip transpose between # and dirs.
     FunctionPtr cntkFunctionWithoutDynamicAxisFixedBatch = Reshape(cntkFunctionWithoutDynamicAxis, newShape, L"");

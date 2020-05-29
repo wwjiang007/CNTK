@@ -8,6 +8,10 @@
 #include "Operators.h"
 #include "Utils.h"
 
+int BatchSizeProcessor::overrideBatchSize = BatchSizeProcessor::defaultFreeBatchSize;
+size_t BatchSizeProcessor::overrideSequenceSize = CNTK::NDShape::FreeDimension;
+
+
 namespace CNTK
 {
 namespace ONNX
@@ -33,6 +37,12 @@ namespace ONNX
         { L"Pooling",  { {
             { L"Pooling",  "MaxPool" },
             { L"poolingWindowShape", "kernel_shape" },
+            { L"strides", "strides" },
+            { L"autoPadding", "pads" },
+        } } },
+        { L"Unpooling", { {
+            { L"Unpooling", "MaxUnpool" },
+            { L"unpoolingWindowShape", "kernel_shape" },
             { L"strides", "strides" },
             { L"autoPadding", "pads" },
         } } },
@@ -116,6 +126,7 @@ namespace ONNX
         // From Generator
         { L"RandomDistribution", { {
             { L"UniformRandom", "RandomUniform" },
+            { L"uniform", "RandomUniform" },
             // { L"", "low" },
             // { L"", "high" },
             { L"rngSeed", "seed" },
@@ -123,6 +134,7 @@ namespace ONNX
         } } },
         { L"RandomDistribution", { {
             { L"NormalRandom", "RandomNormal" },
+            { L"normal", "RandomNormal" },
             // { L"", "mean" },
             // { L"", "scale" },
             { L"rngSeed", "seed" },
@@ -428,6 +440,18 @@ namespace ONNX
         { L"Alias",{ {
             { L"Alias", "Identity" },
         } } },
+        { L"UnpackBatchAxis",{ {
+            { L"UnpackBatchAxis", "Identity" },
+        } } },
+        { L"ToBatchAxis",{ {
+            { L"ToBatchAxis", "Identity" },
+        } } },
+        { L"UnpackSequenceOp",{ {
+            { L"UnpackSequenceOp", "Identity" },
+        } } },
+        { L"ToSequenceOp",{ {
+            { L"ToSequenceOp", "Identity" },
+        } } },
         { L"StopGradient",{ {
             { L"StopGradient", "Identity" },
             } } },
@@ -459,7 +483,13 @@ namespace ONNX
             { L"offset", "border"},
         } } },
         { L"OneHotOp", { {
-            { L"OneHotOp", "OneHotEncoder"},
+            { L"OneHotOp", "OneHot"},
+        } } },
+        { L"EyeLikeOp",{ {
+            { L"EyeLikeOp", "EyeLike" },
+        } } },
+        { L"ConstantOp",{ {
+            { L"ConstantOp", "ConstantOfShape" },
         } } },
     };
 
@@ -506,7 +536,8 @@ namespace ONNX
     {
         return (cntkOpName == L"Plus") || (cntkOpName == L"Minus") ||
             (cntkOpName == L"ElementTimes") || (cntkOpName == L"ElementDivide") ||
-            (cntkOpName == L"And") || (cntkOpName == L"Or") || (cntkOpName == L"Xor");
+            (cntkOpName == L"And") || (cntkOpName == L"Or") || (cntkOpName == L"Xor") ||
+            (cntkOpName == L"Splice");
     }
 
     bool Operators::SupportBroadcastONNXOp(const std::string& onnxOpName)
@@ -528,7 +559,8 @@ namespace ONNX
     
     bool Operators::IsSequenceBlockOp(const std::string &opName)
     {
-        return opName == "Sequence::ReduceElements" || opName == "Sequence::BroadcastAs";
+        return opName == "Sequence::ReduceElements" || opName == "Sequence::BroadcastAs" || 
+            opName == "Sequence::Gather" || opName == "Sequence::Softmax";
     }
 
     std::unordered_map<std::wstring, std::set<size_t>> Operators::_cntkBlockOPInvalidIndices = {
@@ -550,7 +582,8 @@ namespace ONNX
             { L"Softsign",{ 0 } },
             { L"ImageScaler",{ 0, 1, 2, 3 } },
             { L"MeanVarianceNormalization",{ 0 } },
-            { L"Sequence::Slice",{ 0, 1 } },
+            { L"Sequence::Slice",{ 0, 1, 2, 3, 4 } },
+            { L"GatherPacked",{ 1 } },
         };
 
         std::unordered_map<std::wstring, std::vector<int>> Operators::_cntkToONNXInputIndices = {
@@ -610,5 +643,19 @@ namespace ONNX
             { "Crop" },
         };
 
+        std::string GetRootPath(const std::string& rootPath)
+        {
+            std::string rootPath_ = rootPath;
+            // first make slash consistent (sorry for Linux users:this is not necessary for you)
+            std::replace(rootPath_.begin(), rootPath_.end(), '\\', '/');
+
+            // second, remove trailing slash if there is any
+            std::regex trailer("/+$");
+            std::string root = std::regex_replace(rootPath_, trailer, std::string());
+
+            std::string folder = root.substr(0, root.find_last_of('/'));
+
+            return folder;
+        }
     }
 }
